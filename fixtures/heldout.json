@@ -1,0 +1,50 @@
+{
+  "synthetic": true,
+  "heldOut": true,
+  "description": "Invented evaluation cases. Do not import these into the writing profile or evidence extraction. Compare personalized and generic drafts using identical new facts, then judge them yourself.",
+  "cases": [
+    {
+      "id": "heldout-en-colleague",
+      "title": "SYNTHETIC: an English colleague follow-up",
+      "language": "en",
+      "channel": "slack",
+      "relationship": "Close colleagues",
+      "purpose": "Ask for feedback",
+      "context": "Morgan: I took a look at the new signup flow. I got stuck halfway through.",
+      "intent": "Thank Morgan for trying it. Ask which step caused the problem and what they expected to happen. Explain that this helps me work out what to change.",
+      "requiredContent": ["thank Morgan", "which step caused the problem", "what Morgan expected", "helps decide what to change"],
+      "forbiddenFacts": ["tomorrow", "$500", "attached", "15:00", "mockup"],
+      "humanReference": "Thanks for trying it, Morgan. Which step did you get stuck on, and what were you expecting to happen? That would help me figure out what needs changing.",
+      "judgmentQuestions": ["Which version sounds more like something you would send?", "Does either version omit an intended point?", "Did either version borrow facts from old examples?", "Which exact wording would you change?"]
+    },
+    {
+      "id": "heldout-de-external",
+      "title": "SYNTHETIC: a German external contact",
+      "language": "de",
+      "channel": "email",
+      "relationship": "External business contacts",
+      "purpose": "Clarify a proposal",
+      "addressForm": "Sie",
+      "context": "Guten Tag, vielen Dank für Ihr Interesse. Wir könnten die Einführung als Online-Termin durchführen. Wäre das für Sie passend?",
+      "intent": "Für den Vorschlag bedanken. Ein Online-Termin passt grundsätzlich. Fragen, wie lange die Einführung dauert und ob es vorher Unterlagen zum Lesen gibt. Noch keinen konkreten Termin zusagen.",
+      "requiredContent": ["Danke für den Vorschlag", "Online grundsätzlich passend", "Dauer der Einführung", "vorherige Unterlagen", "keine konkrete Terminzusage"],
+      "forbiddenFacts": ["Dienstag", "14 Uhr", "Anhang", "kostenlos", "bestätige den Termin"],
+      "humanReference": "Guten Tag, vielen Dank für den Vorschlag. Ein Online-Termin passt für mich grundsätzlich gut. Wie viel Zeit sollten wir für die Einführung einplanen, und gibt es Unterlagen, die ich mir vorher ansehen kann? Beste Grüße",
+      "judgmentQuestions": ["Klingt die Formulierung nach Ihnen?", "Bleibt die Sie-Ansprache erhalten?", "Sind Wärme und wichtige Details erhalten?", "Wurden Zusagen oder Termine erfunden?"]
+    },
+    {
+      "id": "heldout-cold-outreach",
+      "title": "SYNTHETIC: cold outreach with sparse style evidence",
+      "language": "en",
+      "channel": "email",
+      "relationship": "New business contact",
+      "purpose": "outreach",
+      "context": "",
+      "intent": "Introduce myself as someone researching how small design teams collect customer feedback. Ask if the recipient would be open to sharing their approach. I do not know their current process or available times.",
+      "requiredContent": ["researching customer feedback", "small design teams", "ask whether open to sharing approach"],
+      "forbiddenFacts": ["I loved your recent post", "15 minutes", "next Tuesday", "we can save you", "your team uses"],
+      "humanReference": null,
+      "judgmentQuestions": ["Is the lack of outreach-specific evidence clear?", "Is the invitation concrete without inventing familiarity?", "What examples would help define this mode?"]
+    }
+  ]
+}

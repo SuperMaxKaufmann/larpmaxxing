@@ -1,0 +1,57 @@
+# Data access and implementation choice
+
+Checked against official documentation on **17 October 2026**. This assessment separates documented capabilities from what Larpmaxxing implements. Repository tests use synthetic provider responses; they do not establish that a particular user's credentials, permissions or billing work.
+
+## Four different kinds of access
+
+**Model inference** produces an answer from the input supplied to an API. **Account authentication** establishes an identity and its permissions. **Conversation history or memory access** requires a separately supported product capability. **External message access** requires authorization to the relevant mailbox or workspace.
+
+An API key, ChatGPT/Claude subscription, account login or MCP connection does not automatically provide all four. MCP exposes the tools and access grants of a particular server; it is not a universal personal-history interface.
+
+| Product | Official capability identified | Current implementation |
+| --- | --- | --- |
+| OpenAI / ChatGPT | OpenAI provides API model access and eligible ChatGPT plan usage through a separate official OAuth flow. No supported general personal ChatGPT-history or memory retrieval API was identified in the reviewed documentation. ChatGPT offers user-requested data exports. | Continue with ChatGPT authorizes eligible plan usage; a separate API key is optional. Both list account models and use the public Responses endpoint for learning/drafting. Import consumer history separately through exported JSON, selected conversations or a chatbot report. [Model listing](https://developers.openai.com/api/reference/resources/models/methods/list), [Responses guide](https://developers.openai.com/api/docs/guides/migrate-to-responses), [ChatGPT export](https://help.openai.com/en/articles/7260999-exporting-your-chatgpt-history-and-data). |
+| Anthropic / Claude | The Messages API processes turns supplied by its caller. Claude's consumer chat search and memory are in-product features; no general consumer-history retrieval API was identified in the reviewed documentation. Consumer data exports are available. | Verify a separate API key through the models endpoint and use Messages for learning/drafting. Import Claude history or reports independently. A Claude subscription does not include API usage. [Model listing](https://platform.claude.com/docs/en/api/models/list), [Messages API](https://platform.claude.com/docs/en/api/messages/create), [Claude export](https://support.anthropic.com/en/articles/9450526-how-can-i-export-my-claude-data), [subscription versus API billing](https://support.claude.com/en/articles/9876003-i-have-a-paid-claude-subscription-pro-max-team-or-enterprise-plans-why-is-claude-api-usage-billed-separately-from-my-paid-claude-plan). |
+| Gmail | OAuth authorizes the Gmail API to read permitted mailbox data. Google's official remote MCP server also exists, with documented Developer Preview prerequisites. | App-owned, in-process MCP adapter over the official Gmail API. Desktop OAuth with a loopback callback is implemented; an authorized access token is an alternative. Read-only, bounded sent-mail thread selection with optional dates. [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app), [hosted Gmail MCP](https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server). |
+| Slack | The Web API reads messages subject to scopes, token identity, access and retention. Slack's official remote MCP documentation permits internal and Marketplace apps. | App-owned, in-process MCP adapter over the official Web API. A human user token authorizes selected **1:1 DMs only**. Bot identities, channels and group DMs are rejected. No Slack browser OAuth flow is implemented; its redirect requires HTTPS. [Slack OAuth](https://docs.slack.dev/authentication/installing-with-oauth/), [history API](https://docs.slack.dev/reference/methods/conversations.history/), [hosted Slack MCP](https://docs.slack.dev/ai/slack-mcp-server/). |
+
+The local adapters deliberately avoid hosted-MCP eligibility as an installation requirement. They are genuine app-owned MCP protocol adapters, **not connections to Google's or Slack's hosted MCP endpoints**. Models never invoke their tools. [Source connection setup and implementation](mcp-sources.md).
+
+## Personalization routes A–D
+
+**A. Supported direct access.** Gmail and Slack use the authorized interfaces above. These retrieve external messages, not ChatGPT or Claude history. Every installation supplies its own accounts and permissions; existing connections in another chatbot or Codex are not inherited. We do not scrape consumer accounts, reuse browser cookies or invent history endpoints.
+
+**B. User-provided exports and selected conversations.** Advanced import accepts supported ChatGPT/Claude conversation JSON layouts and labeled pasted transcripts. Export JSON must be extracted first; ZIP files and attachments are not parsed. Stable source/message IDs preserve conversation branches and deduplicate repeated imports. Export formats can change, so unsupported layouts fail visibly rather than pretending to import history. [ChatGPT export transfer instructions](https://help.openai.com/en/articles/9106926-transfer-exported-conversations-between-chatgpt-accounts).
+
+**C. Ask your existing chatbot.** The app provides a [copyable retrieval prompt](ask-your-chatbot.md). It asks the existing chatbot to search only history it can actually access, distinguish retrieved evidence from remembered impressions, cite conversations and dates where available, preserve contradictions, disclose limitations and avoid inventing examples or approvals. Search availability depends on the product, account and settings. [Claude chat search and memory](https://support.claude.com/en/articles/11817273-use-claude-s-chat-search-and-memory-to-build-on-previous-context).
+
+A report is proposed evidence, not verified account memory. Its claimed source links remain distinguishable from locally inspected excerpts. The user reviews resulting preferences before they influence drafts. If the source chatbot cannot search, selected conversations or manual examples still work.
+
+**D. Manual evidence and decisions.** Users can paste their own outgoing emails, label mixed threads, and add good examples, rejected wording or explicit preferences. Authorship is deliberate: pasted instructions and incoming messages do not automatically become the user's voice. Manual review can narrow or reject an inference without losing its source reference.
+
+The simplest dependable personalization route remains **user-selected imports and manual evidence**, with the chatbot report as an assisted discovery route. Gmail and Slack are optional conveniences. Generation provider choice is independent of where evidence came from; WhatsApp remains pasted context.
+
+## Current flow and limits
+
+The interface starts with Continue with ChatGPT (eligible plan usage) or optional API-key verification, then requires a source containing the user's writing. Imported sources remain private local data after restart, while API keys and source tokens entered in the UI are session-only. ChatGPT OAuth connections persist privately. Listing models verifies authentication; it does **not** verify inference permission, quota or billing. Actual inference errors remain visible.
+
+Users select sources, inspect bounded learning payloads, start analysis, review proposals, choose or create a personality, and generate drafts. There is no automatic analysis upon connecting an account, and no automatic sending. Lack of direct chatbot-history access does not block imports, reports or manual personalization.
+
+Gmail uses `gmail.readonly`, authenticates mailbox identity, selects threads containing sent mail, and retains relevant incoming context. Slack needs user scopes `im:read` and `im:history`; optional `users:read` supplies counterpart names. Every Slack import checks that the selected ID is still a 1:1 DM before reading history. The adapter has no channel, group-DM, search or write tool. Sent messages remain unapproved evidence until reviewed.
+
+Imports are bounded, not unlimited archive scrapes. Date-only selections include both selected dates in UTC and are checked on individual messages. Retention, missing permissions, API limits and older thread roots can leave gaps; warnings identify incomplete retrieval. Quotation/signature cleanup is heuristic, with originals retained for inspection. See [exact setup, bounds and MCP tools](mcp-sources.md) rather than requesting broader permissions.
+
+## Privacy boundary
+
+Credentials entered in the interface stay in server memory and travel only to the relevant official provider. They are excluded from browser storage, status responses, model prompts and ordinary logs. Google client configuration and optional preexisting access tokens can be supplied through the server environment; disconnecting does not erase environment variables or revoke an upstream grant. ChatGPT plan OAuth uses its own protected local token file and refresh flow; Gmail/Slack do not yet persist refresh tokens. OS credential-store integration is not implemented.
+
+Connection and import do not invoke a language model. Clicking Analyze or Generate sends the disclosed selected content to the chosen provider. Learning uses bounded message excerpts and relevant review decisions; drafting uses current intent/context, applicable accepted preferences and a few style examples. **Local storage does not mean local inference.** OpenAI generation requests use `store:false`; that setting is not a promise of local processing or a replacement for provider data policies.
+
+Messages are untrusted source data. They cannot select tools, expand permissions, change API endpoints or override application instructions. Source deletion removes imported content and its derived records, cancels related analysis, and clears profile undo snapshots that could restore deleted evidence. Deleting a local source is separate from disconnecting an account.
+
+
+## Subscription access update (2026-10-17)
+
+The original API-only implementation was unnecessarily restrictive. OpenAI now documents [ChatGPT plan usage for local open-source apps](https://developers.openai.com/siwc/token-sharing-open-source), [dynamic registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), and [public Responses inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference). This is now the primary onboarding route. It requires the user’s explicit plan-usage consent and eligibility, not a developer API balance, and does not expose ChatGPT history. An eligible subscription is not interchangeable with an API key.
+
+[Codex app-server](https://learn.chatgpt.com/docs/app-server) is another supported local integration, but this app uses the narrower direct sign-in/inference flow because writing needs no agent tools. Claude Code supports programmatic operation of the unmodified binary with the user’s own authentication, subject to its [current integration conditions](https://code.claude.com/docs/en/legal-and-compliance). Directly collecting or forwarding Claude subscription tokens is not an equivalent supported third-party sign-in route. A Claude Code bridge is not implemented or advertised as connected. Existing Anthropic API access and manual report imports remain available.

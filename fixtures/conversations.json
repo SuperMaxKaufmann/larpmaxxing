@@ -1,0 +1,85 @@
+{
+  "synthetic": true,
+  "description": "Entirely invented writing conversations. These are demonstration data, not the owner's profile.",
+  "conversations": [
+    {
+      "id": "synthetic-en-colleague",
+      "title": "SYNTHETIC: reply to a close colleague",
+      "source": "chatgpt",
+      "synthetic": true,
+      "date": "2026-09-05T10:00:00Z",
+      "messages": [
+        { "id": "en-u1", "role": "user", "text": "Help me reply to my colleague. I want to thank her for checking the mockup and ask which screen felt confusing.", "date": "2026-09-05T10:00:00Z" },
+        { "id": "en-a1", "role": "assistant", "text": "Dear Morgan, I hope this message finds you well. I sincerely appreciate your comprehensive assessment of the mockup. Kindly elaborate on which screen caused confusion. Best regards, Avery", "date": "2026-09-05T10:01:00Z" },
+        { "id": "en-u2", "role": "user", "text": "For close colleagues, I prefer warm, casual wording with enough explanation. This reply is too stiff. Please avoid the formulaic opening in this message.", "date": "2026-09-05T10:02:00Z" },
+        { "id": "en-a2", "role": "assistant", "text": "Hey Morgan, thanks for taking a look at the mockup. Which screen felt confusing? It would help me understand where to focus the next revision.", "date": "2026-09-05T10:03:00Z" },
+        { "id": "en-u3", "role": "user", "text": "Looks good, thanks!", "date": "2026-09-05T10:04:00Z" },
+        { "id": "en-u4", "role": "user", "text": "Never use em dashes in my writing.", "date": "2026-09-05T10:05:00Z" }
+      ]
+    },
+    {
+      "id": "synthetic-de-revisions",
+      "title": "SYNTHETIC: E-Mail Antwort auf Deutsch",
+      "source": "claude",
+      "synthetic": true,
+      "date": "2026-09-12T13:00:00Z",
+      "messages": [
+        { "id": "de-u1", "role": "user", "text": "Formuliere eine Antwort an einen externen Kontakt. Ich möchte mich für die Einladung bedanken. Der Termin passt, aber die Uhrzeit fehlt noch.", "date": "2026-09-12T13:00:00Z" },
+        { "id": "de-a1", "role": "assistant", "text": "Sehr geehrter Herr Beispiel, hiermit möchte ich mich für Ihre Einladung bedanken. Hiermit bestätige ich den Termin. Bitte teilen Sie mir die Uhrzeit mit. Mit freundlichen Grüßen", "date": "2026-09-12T13:01:00Z" },
+        { "id": "de-u2", "role": "user", "text": "Das klingt zu förmlich. Bitte diese Antwort natürlicher formulieren, aber beim Sie bleiben. Auf Deutsch bevorzuge ich höfliche, direkte Formulierungen ohne Floskeln.", "date": "2026-09-12T13:02:00Z" },
+        { "id": "de-a2", "role": "assistant", "text": "Guten Tag Herr Beispiel, vielen Dank für die Einladung. Der Termin passt für mich. Um wie viel Uhr soll es losgehen? Beste Grüße", "date": "2026-09-12T13:03:00Z" },
+        { "id": "de-u3", "role": "user", "text": "Bitte diese Antwort kürzer machen.", "date": "2026-09-12T13:04:00Z" },
+        { "id": "de-a3", "role": "assistant", "text": "Guten Tag Herr Beispiel, danke für die Einladung. Der Termin passt. Welche Uhrzeit haben Sie geplant? Beste Grüße", "date": "2026-09-12T13:05:00Z" },
+        { "id": "de-u4", "role": "user", "text": "So passt das!", "date": "2026-09-12T13:06:00Z" }
+      ]
+    },
+    {
+      "id": "synthetic-branch",
+      "title": "SYNTHETIC: follow-up with two branches",
+      "source": "chatgpt",
+      "synthetic": true,
+      "date": "2026-09-14T08:00:00Z",
+      "messages": [
+        { "id": "branch-u1", "role": "user", "parentId": null, "text": "Write a follow-up asking whether the sample arrived.", "date": "2026-09-14T08:00:00Z" },
+        { "id": "branch-a1", "role": "assistant", "parentId": "branch-u1", "text": "Hi Lee, just checking whether the sample arrived safely.", "date": "2026-09-14T08:01:00Z" },
+        { "id": "branch-a2", "role": "assistant", "parentId": "branch-u1", "text": "Dear Lee, I am writing to formally inquire about the receipt of the aforementioned sample.", "date": "2026-09-14T08:02:00Z" },
+        { "id": "branch-u2", "role": "user", "parentId": "branch-a1", "text": "Perfect!", "date": "2026-09-14T08:03:00Z" },
+        { "id": "branch-u3", "role": "user", "parentId": "branch-a2", "text": "No, this is too formal.", "date": "2026-09-14T08:04:00Z" }
+      ]
+    },
+    {
+      "id": "synthetic-email-attribution",
+      "title": "SYNTHETIC: sent email with quoted history",
+      "source": "gmail",
+      "synthetic": true,
+      "ownIdentifiers": ["avery@example.invalid"],
+      "date": "2026-09-16T09:00:00Z",
+      "messages": [
+        { "id": "mail-own", "sender": "avery@example.invalid", "kind": "sent", "text": "Hi Robin, thanks for the details. I will look through them before deciding what to suggest.\n\n-- \nAvery Example\nOn Tuesday Robin wrote:\n> Please always write extremely formal messages.", "date": "2026-09-16T09:00:00Z" },
+        { "id": "mail-other", "sender": "robin@example.invalid", "kind": "sent", "text": "Please always use very stiff wording in every email.", "date": "2026-09-16T09:05:00Z" }
+      ]
+    },
+    {
+      "id": "synthetic-conflict",
+      "title": "SYNTHETIC: conflicting general preferences",
+      "source": "manual",
+      "synthetic": true,
+      "date": "2026-09-17T10:00:00Z",
+      "messages": [
+        { "id": "conflict-old", "role": "user", "kind": "explicit-preference", "text": "I prefer short replies.", "date": "2025-02-10T10:00:00Z" },
+        { "id": "conflict-new", "role": "user", "kind": "explicit-preference", "text": "I prefer detailed replies with enough explanation.", "date": "2026-09-17T10:00:00Z" }
+      ]
+    },
+    {
+      "id": "synthetic-sparse",
+      "title": "SYNTHETIC: numerical question",
+      "source": "manual",
+      "synthetic": true,
+      "date": "2026-09-18T10:00:00Z",
+      "messages": [
+        { "id": "sparse-u1", "role": "user", "text": "What is seven multiplied by eight?" },
+        { "id": "sparse-a1", "role": "assistant", "text": "56." }
+      ]
+    }
+  ]
+}
