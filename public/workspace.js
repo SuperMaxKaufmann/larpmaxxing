@@ -187,14 +187,15 @@ function renderPersonalityCard(mode) {
   const baseline=mode.baseline;
   return `<article class="mode-card personality-card"><div class="record-meta"><span>${baseline?'Baseline · ':''}${esc(mode.status)}</span><span>${esc(Array.isArray(mode.languages)&&mode.languages.length?mode.languages.join(' + '):mode.language||'Any language')}${mode.relationship?` · ${esc(mode.relationship)}`:''}</span></div><h3>${esc(mode.name)}</h3><p>${esc(mode.description||'Choose when this personality applies.')}</p><details class="personality-detail"><summary>Detailed personality</summary><div class="mode-guidance">${formatPersonalityGuidance(mode.guidance)}</div>${baseline?`<p class="input-hint">Created from ${plural(Number(baseline.totalSources)||0,'source')} with ${esc(baseline.modelId||baseline.provider)} · ${date(baseline.analyzedAt)}</p>`:''}</details>${mode.sample?`<details><summary>Generated sample</summary><blockquote>${esc(mode.sample)}</blockquote><p class="input-hint">Generated illustration, not historical evidence.</p></details>`:''}${refsMarkup(mode)}${recordActions('modes',mode)}</article>`;
 }
+// Only the latest run matters: older failed runs were superseded by later ones.
 function renderPersonalityBaseline() {
-  const hasBaseline=data.profile.modes.some(m=>m.baseline);
-  const active=data.personalityJobs.some(j=>['ready','running'].includes(j.status));
-  if(hasBaseline&&!active) {
-    const completed=data.personalityJobs.filter(j=>j.status==='complete');
-    return `<section class="personality-baseline baseline-compact" aria-label="Baseline personalities"><div class="baseline-intro"><div><h2>Your baseline personalities.</h2><p>Review the personalities below, then fine-tune what sounds like you.</p></div>${button('Create a new baseline','personality-preview','',true)}</div>${renderPersonalityJobs(data.personalityJobs.filter(j=>j.status!=='complete'))}${completed.length?`<details class="baseline-history"><summary>Analysis details</summary>${renderPersonalityJobs(completed)}</details>`:''}</section>`;
-  }
-  return `<section class="personality-baseline" aria-label="Baseline personalities"><div class="baseline-intro"><div><span class="eyebrow">YOUR STARTING POINT</span><h2>${hasBaseline?'Your voice, with a foundation.':'Find your personalities.'}</h2><p>Analyze all imported sources and group your writing into 3–5 detailed personalities. Review the baseline, then make it yours.</p><p class="input-hint">A model of your writing choices, grounded in your examples. Sparse evidence may support fewer personalities.</p></div>${button(hasBaseline?'Create a new baseline':'Create baseline personalities','personality-preview',active?'disabled':'',true)}</div>${renderPersonalityJobs()}</section>`;
+  const jobs=[...data.personalityJobs].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const latest=jobs.at(-1),lastComplete=jobs.filter(j=>j.status==='complete').at(-1);
+  const active=latest&&['ready','running'].includes(latest.status);
+  const showLatest=latest&&latest.status!=='complete';
+  const count=data.profile.modes.filter(m=>m.baseline&&m.baseline.jobId===lastComplete?.id&&m.status!=='rejected').length;
+  const summary=lastComplete?`Last created ${date(lastComplete.updatedAt||lastComplete.date)} with ${esc(modelLabel({provider:lastComplete.provider,model:lastComplete.modelId}))} from ${plural(Number(lastComplete.totalSources)||0,'source')}${count?` · ${plural(count,'personality')}`:''}.`:'Analyze all imported sources and group your writing into up to 5 personalities by who you write to.';
+  return `<section class="personality-baseline baseline-compact" aria-label="Baseline personalities"><div class="baseline-intro"><div><h2>${lastComplete?'Your baseline personalities.':'Find your personalities.'}</h2><p>${summary}</p></div>${button(lastComplete?'Create a new baseline':'Create baseline personalities','personality-preview',active?'disabled':'',true)}</div>${showLatest?renderPersonalityJobs([latest]):''}</section>`;
 }
 function renderPersonalityJobs(jobs=data.personalityJobs) {
   return jobs.slice(-3).reverse().map(job=>{
