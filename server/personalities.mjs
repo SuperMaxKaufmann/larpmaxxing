@@ -208,7 +208,7 @@ export class PersonalitiesService {
   }
 
   create({provider, modelId, effort = 'default'} = {}) {
-    if (!['openai', 'anthropic'].includes(provider) || typeof modelId !== 'string' || !modelId.trim() || modelId.length > 200) throw fail('Choose a connected provider and model for personality creation.');
+    if (!['openai', 'anthropic', 'claude-plan'].includes(provider) || typeof modelId !== 'string' || !modelId.trim() || modelId.length > 200) throw fail('Choose a connected provider and model for personality creation.');
     effort = validateEffort(provider, modelId, effort);
     const sources = allSources(this.store), plan = makeQueue(sources);
     if (!plan.queue.length) throw fail('The imported sources contain no readable messages.');

@@ -36,6 +36,14 @@ const OPTIONS = {
     'claude-sonnet-4-6': ['low', 'medium', 'high', 'max'],
     'claude-haiku-5-5': ['low', 'medium', 'high', 'xhigh', 'max'],
   },
+  // Claude Code aliases on a Claude plan resolve to Opus, Sonnet and Haiku 5.5.
+  // An unsupported level falls back to the highest supported level below it.
+  // https://code.claude.com/docs/en/model-config
+  'claude-plan': {
+    opus: ['low', 'medium', 'high', 'xhigh', 'max'],
+    sonnet: ['low', 'medium', 'high', 'xhigh', 'max'],
+    haiku: ['low', 'medium', 'high', 'xhigh', 'max'],
+  },
 };
 
 export function modelOptions(provider, modelId) {

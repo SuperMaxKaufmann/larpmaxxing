@@ -49,3 +49,20 @@ body:before{opacity:.023;z-index:0;background:linear-gradient(118deg,transparent
 .saved-account button { margin: 4px 14px 4px 0; }
 .plan-status { text-align: right; color: var(--muted, #a7a498); font-size: 12px; margin: 0 0 20px; }
 .plan-status a { color: inherit; }
+
+/* Claude plan sits beside ChatGPT; tasks can use either. */
+.plan-divider { display: flex; align-items: center; gap: 12px; margin: 26px 0 20px; color: var(--quiet, #74766f); font: 9px var(--mono); letter-spacing: 1.4px; text-transform: uppercase; }
+.plan-divider::before, .plan-divider::after { content: ""; flex: 1; border-top: 1px solid var(--line, #32322e); }
+.claude-connect { margin-bottom: 4px; }
+.claude-setup { margin-top: 14px; }
+.claude-setup summary { cursor: pointer; font-size: 10px; color: var(--muted, #9b9a93); }
+.claude-steps { margin: 12px 0 0; padding-left: 18px; font-size: 11px; line-height: 2; color: var(--muted, #9b9a93); }
+.claude-steps code { white-space: normal; }
+.claude-account { border-top: 1px solid var(--border, #38382f); }
+.workspace-dialog .task-route { border-top: 1px solid var(--line, #32322e); padding-top: 16px; margin-top: 16px; }
+.workspace-dialog .task-route legend { font-size: 11px; color: var(--text, #dedbd2); letter-spacing: .4px; }
+.workspace-dialog .task-route .form-grid { margin-top: 10px; }
+.workspace-dialog #model-choice > .button { margin-top: 22px; }
+.workspace-dialog .claude-connection { border-top: 1px solid var(--line, #32322e); margin-top: 24px; padding-top: 16px; }
+.workspace-dialog .claude-connection .button { margin-top: 12px; }
+.plan-separator { color: var(--quiet, #74766f); }

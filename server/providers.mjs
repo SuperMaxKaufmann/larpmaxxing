@@ -1,13 +1,14 @@
 import { modelRequestLimits, validateEffort } from './model-options.mjs';
 import {readResponseStream} from './response-stream.mjs';
+import {ClaudeRunError} from './claude-plan.mjs';
 
-const PROVIDERS = new Set(['openai', 'anthropic', 'demo']);
+const PROVIDERS = new Set(['openai', 'anthropic', 'claude-plan', 'demo']);
 const PROVIDER_CODES = new Set(['invalid_api_key', 'authentication_error', 'permission_error', 'model_not_found', 'insufficient_quota', 'credit_balance_exhausted', 'organization_spend_limit_exceeded', 'project_spend_limit_exceeded', 'organization_usage_limit_exceeded', 'rate_limit_exceeded', 'rate_limit_error', 'slow_down', 'billing_hard_limit_reached', 'context_length_exceeded', 'unsupported_parameter', 'unsupported_value', 'invalid_request_error', 'invalid_value', 'server_error', 'api_error', 'overloaded_error']);
 const PROVIDER_PARAMS = new Set(['model', 'service_tier', 'text.format', 'text.format.type', 'max_output_tokens', 'reasoning.effort', 'instructions', 'input', 'store']);
 const PROVIDER_REASONS = new Set(['json_context_missing', 'unsupported_parameter', 'unsupported_value', 'model_access', 'service_tier', 'project_access']);
 for(const code of ['subscription_sharing_user_not_eligible','subscription_sharing_usage_limit_exceeded','subscription_sharing_usage_unavailable','subscription_sharing_unsupported_capability','subscription_sharing_route_not_supported','subscription_sharing_invalid_user','subscription_sharing_user_unavailable','chatpass_v2_scope_not_authorized','chatpass_v2_invalid_authorization_context'])PROVIDER_CODES.add(code);
 const ERROR_MESSAGES = {
-  configuration: 'The model provider is not configured. Connect ChatGPT or an API key and choose an available model.',
+  configuration: 'The model provider is not configured. Connect ChatGPT, your Claude plan or an API key and choose an available model.',
   chatgpt_auth: 'Your ChatGPT connection could not be renewed. Open connection settings and continue with your saved ChatGPT account. No API key is required.',
   effort: 'Choose an effort supported by this model, or use the provider default.',
   timeout: 'The model request timed out. Try a lower effort or a smaller request, then resume. The provider may have charged for work already performed.',
@@ -19,17 +20,26 @@ const ERROR_MESSAGES = {
   invalid_response: 'The model provider returned an invalid response. Please retry.',
   invalid_json: 'The model did not return valid JSON. No result from this request was saved. Try again or choose a JSON-capable model.',
   provider_failure: 'The model provider could not complete this request. Please retry later.',
+  claude_missing: 'Claude Code can no longer be found on this computer. Reinstall it, run “claude auth login”, then reconnect your Claude plan. Completed work remains saved.',
+  claude_signed_out: 'Claude Code is signed out of your Claude plan. Run “claude auth login” in Terminal, choose your Claude account, then retry. Completed work remains saved.',
+  claude_not_plan: 'Claude Code is set up for API or cloud billing, not your Claude plan, so the result was discarded. Run “claude auth login” and choose your Claude account, then retry.',
+  claude_account: 'Claude reported a problem with your account or plan. Check your plan at claude.ai, then retry. Completed work remains saved.',
+  claude_limit: 'Claude plan usage limit reached. Wait for it to reset (claude.ai → Settings → Usage), then resume. Completed work remains saved.',
+  claude_model: 'This Claude model isn’t available on your plan. Choose another Claude model.',
+  claude_unavailable: 'Claude is temporarily unavailable. Your connection is saved. Try again later.',
+  claude_failed: 'Claude Code could not complete this request. Update it with “claude update”, then retry.',
 };
+const CLAUDE_CODES = {missing: 'claude_missing', signed_out: 'claude_signed_out', not_plan: 'claude_not_plan', account: 'claude_account', limit: 'claude_limit', model: 'claude_model', unavailable: 'claude_unavailable', failed: 'claude_failed', timeout: 'timeout', output_limit: 'output_limit', refusal: 'refusal', incomplete: 'incomplete', invalid_response: 'invalid_response'};
 const diagnostics = new WeakMap();
 
 function sanitizeDetails(code, input = {}) {
   const details = { code };
-  if (['openai', 'anthropic'].includes(input.provider)) details.provider = input.provider;
+  if (['openai', 'anthropic', 'claude-plan'].includes(input.provider)) details.provider = input.provider;
   if (Number.isInteger(input.httpStatus) && input.httpStatus >= 100 && input.httpStatus <= 599) details.httpStatus = input.httpStatus;
   if (PROVIDER_CODES.has(input.providerCode)) details.providerCode = input.providerCode;
   if (PROVIDER_PARAMS.has(input.providerParam)) details.providerParam = input.providerParam;
   if (PROVIDER_REASONS.has(input.providerReason)) details.providerReason = input.providerReason;
-  if(input.authMode==='chatgpt')details.authMode='chatgpt';
+  if(['chatgpt','claude-plan'].includes(input.authMode))details.authMode=input.authMode;
   if (typeof input.requestId === 'string' && /^req_[a-zA-Z0-9_-]{4,120}$/.test(input.requestId)) details.requestId = input.requestId;
   return details;
 }
@@ -124,13 +134,16 @@ function withAbort(promise, signal) {
 
 export async function completeJSON(provider, system, payload, { fetchImpl = fetch, env = process.env, credentials, signal, effort = 'default', timeoutMs } = {}) {
   if (!PROVIDERS.has(provider) || provider === 'demo') throw new Error('Choose an available model provider.');
+  const claudePlan = provider === 'claude-plan';
+  // A Claude plan is reachable only through a connected Claude Code CLI, never environment keys.
   const configured = credentials === undefined
-    ? { provider, apiKey: env[provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY'], model: env[provider === 'openai' ? 'OPENAI_MODEL' : 'ANTHROPIC_MODEL'] }
+    ? (claudePlan ? null : { provider, apiKey: env[provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY'], model: env[provider === 'openai' ? 'OPENAI_MODEL' : 'ANTHROPIC_MODEL'] })
     : credentials;
   const chatgpt=provider==='openai'&&configured?.authMode==='chatgpt';
   let apiKey=configured?.apiKey;
   if(chatgpt) {try {apiKey=await configured.getAccessToken();}catch {throw new ModelRequestError('chatgpt_auth',{provider,authMode:'chatgpt'});}}
-  if (!configured || configured.provider !== provider || typeof apiKey !== 'string' || !apiKey || apiKey.length > (chatgpt?32768:4096) || /[^\x21-\x7e]/.test(apiKey)
+  if (!configured || configured.provider !== provider
+    || (claudePlan ? typeof configured.run !== 'function' : typeof apiKey !== 'string' || !apiKey || apiKey.length > (chatgpt?32768:4096) || /[^\x21-\x7e]/.test(apiKey))
     || typeof configured.model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/.test(configured.model)) throw new ModelRequestError('configuration', { provider });
   try { effort = validateEffort(provider, configured.model, effort); }
   catch { throw new ModelRequestError('effort', { provider }); }
@@ -140,6 +153,8 @@ export async function completeJSON(provider, system, payload, { fetchImpl = fetc
   try { content = JSON.stringify(payload); } catch { throw new Error('The selected content could not be prepared for the model.'); }
   if (!content || content.length > 1500000) throw new Error('The selected content is too large for one model request. Choose a smaller batch.');
   const limits = modelRequestLimits(provider, configured.model, effort);
+  const duration = Number.isInteger(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, limits.timeoutMs) : limits.timeoutMs;
+  if (claudePlan) return claudePlanJSON(configured, instructions, content, effort, signal, duration);
   let url, headers, body;
   if (provider === 'openai') {
     url = 'https://api.openai.com/v1/responses';
@@ -159,7 +174,6 @@ export async function completeJSON(provider, system, payload, { fetchImpl = fetc
   }
   const deadline = new AbortController();
   const requestSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
-  const duration = Number.isInteger(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, limits.timeoutMs) : limits.timeoutMs;
   const timer = setTimeout(() => deadline.abort(), duration);
   let stage = 'network';
   let details = { provider,...(chatgpt?{authMode:'chatgpt'}:{}) };
@@ -191,13 +205,46 @@ export async function completeJSON(provider, system, payload, { fetchImpl = fetc
       return block.text;
     }).join('');
     stage = 'invalid_json';
-    const parsed = JSON.parse(text.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, ''));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ModelRequestError('invalid_json', details);
-    return parsed;
+    return jsonObject(text, details);
   } catch (error) {
     if (signal?.aborted) throw new ModelRequestError('cancelled', details);
     if (deadline.signal.aborted) throw new ModelRequestError('timeout', details);
     if (safeModelError(error)) throw error;
+    throw new ModelRequestError(stage, details);
+  } finally { clearTimeout(timer); }
+}
+
+function jsonObject(text, details, {lenient = false} = {}) {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+  let parsed;
+  try { parsed = JSON.parse(trimmed); }
+  catch (error) {
+    // Claude Code has no JSON mode; accept one object surrounded by a stray sentence.
+    const start = trimmed.indexOf('{'), end = trimmed.lastIndexOf('}');
+    if (!lenient || start < 0 || end <= start) throw error;
+    parsed = JSON.parse(trimmed.slice(start, end + 1));
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ModelRequestError('invalid_json', details);
+  return parsed;
+}
+
+async function claudePlanJSON(configured, instructions, content, effort, signal, duration) {
+  const details = { provider: 'claude-plan', authMode: 'claude-plan' };
+  const deadline = new AbortController();
+  const requestSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+  const timer = setTimeout(() => deadline.abort(), duration);
+  let stage = 'claude_failed';
+  try {
+    requestSignal.throwIfAborted();
+    const text = await withAbort(configured.run({ system: instructions, content, model: configured.model, effort, signal: requestSignal, timeoutMs: duration }), requestSignal);
+    if (typeof text !== 'string') throw new ModelRequestError('invalid_response', details);
+    stage = 'invalid_json';
+    return jsonObject(text, details, { lenient: true });
+  } catch (error) {
+    if (signal?.aborted) throw new ModelRequestError('cancelled', details);
+    if (deadline.signal.aborted) throw new ModelRequestError('timeout', details);
+    if (safeModelError(error)) throw error;
+    if (error instanceof ClaudeRunError) throw new ModelRequestError(CLAUDE_CODES[error.code] || 'claude_failed', details);
     throw new ModelRequestError(stage, details);
   } finally { clearTimeout(timer); }
 }

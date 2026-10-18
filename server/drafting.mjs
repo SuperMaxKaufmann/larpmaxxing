@@ -1,4 +1,4 @@
-import {completeJSON} from './providers.mjs';
+import {completeJSON,safeModelError} from './providers.mjs';
 import {uid} from './storage.mjs';
 const accepted = item => ['accepted','edited'].includes(item.status);
 const asText = value => typeof value==='string'?value:'';
@@ -111,7 +111,7 @@ export async function generateDraft(profile,request,{complete=completeJSON}={}) 
     draft=request.intent.trim();
     review={contentIssues:[],styleIssues:['Offline demonstration does not assess tone or perform revisions.'],missingPointIds:[],unsupportedClaims:[],method:'Demonstration, no model called'};
   } else {
-    const planned=await complete(provider,PLAN_SYSTEM,preview.payload);
+    const planned=await complete(provider,PLAN_SYSTEM,preview.payload,{task:'drafting'});
     const strings = value => Array.isArray(value) && value.length<=200 && value.every(item=>typeof item==='string' && item.length<=5000);
     if (!planned || !Array.isArray(planned.points)||!planned.points.length||planned.points.length>200
       || planned.points.some(p=>!p || typeof p.id!=='string' || !p.id.trim() || p.id.length>100 || typeof p.text!=='string'||!p.text.trim()||p.text.length>10000)
@@ -120,7 +120,7 @@ export async function generateDraft(profile,request,{complete=completeJSON}={}) 
     plan={points:planned.points.map(p=>({id:p.id,text:p.text})),incomingRequests:planned.incomingRequests,
       missing:[...new Set([...preview.plan.missing,...planned.missing])],method:'Model-assisted; verify the extracted points.'};
     if (plan.missing.length) return {id:uid(),draft:'',plan,needsClarification:true,checks:{hardRules:[],missingRequired:[],possibleLeaks:[],warnings:['Answer these questions in your intent, then draft again.']},review:null,provider,demo:false,appliedPreferences:preview.preferences,usedExamples:[...preview.examples,...preview.rejectedExamples].map(e=>e.id)};
-    const generated=await complete(provider,DRAFT_SYSTEM,{...preview.payload,plan});
+    const generated=await complete(provider,DRAFT_SYSTEM,{...preview.payload,plan},{task:'drafting'});
     if (typeof generated?.draft!=='string'||!generated.draft.trim()) throw new Error('The provider returned no draft. Please retry.');
     if (generated.draft.length>60000) throw new Error('The provider returned an unexpectedly long draft. Please retry with a smaller request.');
     draft=generated.draft;
@@ -128,10 +128,10 @@ export async function generateDraft(profile,request,{complete=completeJSON}={}) 
   const checks=validateDraft(draft,request,preview.preferences,[...preview.examples,...preview.rejectedExamples]);
   if (provider!=='demo') {
     try {
-      review=await complete(provider,REVIEW_SYSTEM,{...preview.payload,plan,draft:checks.draft});
+      review=await complete(provider,REVIEW_SYSTEM,{...preview.payload,plan,draft:checks.draft},{task:'critique'});
       if (!review || !['contentIssues','styleIssues','missingPointIds','unsupportedClaims'].every(k=>Array.isArray(review[k])&&review[k].length<=200&&review[k].every(s=>typeof s==='string'&&s.length<=5000))) throw new Error('Invalid review');
       review=Object.fromEntries(['contentIssues','styleIssues','missingPointIds','unsupportedClaims'].map(k=>[k,review[k]]));
-    } catch {review={contentIssues:[],styleIssues:[],missingPointIds:[],unsupportedClaims:[],unavailable:true};checks.warnings.push('Model-assisted review failed. Review content and tone manually.');}
+    } catch(error) {const reason=safeModelError(error);review={contentIssues:[],styleIssues:[],missingPointIds:[],unsupportedClaims:[],unavailable:true};checks.warnings.push(`Model-assisted review failed. Review content and tone manually.${reason?` ${reason}`:''}`);}
   }
   return {id:uid(),draft:checks.draft,plan,checks,review,provider,demo:provider==='demo',appliedPreferences:preview.preferences,usedExamples:[...preview.examples,...preview.rejectedExamples].map(e=>e.id),modeId:request.modeId,selection:preview.selection,request,date:new Date().toISOString()};
 }

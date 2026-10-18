@@ -11,6 +11,7 @@ import {createImport,stepImport,extractSelected,suggestModes,deleteSource,record
 import {Onboarding} from './onboarding.mjs';
 import {Workspace} from './workspace.mjs';
 import {ChatGPTAccess} from './chatgpt-auth.mjs';
+import {ClaudePlanAccess} from './claude-plan.mjs';
 
 function json(res,data,status=200) {res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
 async function body(req) {
@@ -21,10 +22,11 @@ async function body(req) {
 }
 function readJSON(relative) {return JSON.parse(fs.readFileSync(path.join(projectRoot,relative),'utf8'));}
 function heldoutCases() {const raw=readJSON('fixtures/heldout.json');return Array.isArray(raw)?raw:raw.cases||[];}
-export function createApp({store=new Store(),generate=generateDraft,onboarding,modelSession,sourceTool,env,fetchImpl,complete,chatgptAccess}={}) {
+export function createApp({store=new Store(),generate=generateDraft,onboarding,modelSession,sourceTool,env,fetchImpl,complete,chatgptAccess,claudeAccess}={}) {
   const csrfToken=crypto.randomBytes(32).toString('hex');
   const harness=onboarding||new Onboarding(store,{modelSession,sourceTool,env,fetchImpl});
   const chatgpt=chatgptAccess||new ChatGPTAccess(store.dir,harness.modelSession,{fetchImpl});
+  const claude=claudeAccess||new ClaudePlanAccess(store,harness.modelSession,{env:env||process.env});
   const workspace=new Workspace(store,harness,{generate,complete,fetchImpl});
   const server=http.createServer(async(req,res)=>{
     res.setHeader('X-Content-Type-Options','nosniff');
@@ -67,28 +69,30 @@ export function createApp({store=new Store(),generate=generateDraft,onboarding,m
           if(method==='GET'&&route==='/api/workspace')return json(res,{...workspace.status(),csrfToken});
           if(method==='GET'&&route==='/api/workspace/search')return json(res,workspace.search(url.searchParams.get('q')||''));
           if(method==='GET'&&route.startsWith('/api/workspace/sources/'))return json(res,workspace.source(decodeURIComponent(route.slice('/api/workspace/sources/'.length))));
-          if(method==='POST'&&route==='/api/workspace/model')return json(res,workspace.selectModel(input.modelId,input.effort));
+          if(method==='POST'&&route==='/api/workspace/model')return json(res,input.tasks?workspace.setRoutes(input.tasks):workspace.selectModel(input.modelId,input.effort));
           if(method==='POST'&&route==='/api/workspace/personalities/preview')return json(res,workspace.personalities.preview(input.batchIndex??0));
           if(method==='POST'&&route==='/api/workspace/personalities')return json(res,{job:workspace.createPersonalities(input)});
           const personalities=route.match(/^\/api\/workspace\/personalities\/([^/]+)$/);
           if(method==='POST'&&personalities) {if(input.action==='step'||!input.action)workspace.requireSource();return json(res,{job:await workspace.personalities.act(decodeURIComponent(personalities[1]),input.action||'step',{effort:input.effort})});}
           if(method==='POST'&&route==='/api/workspace/learn/preview')return json(res,workspace.learning.preview(input.sourceIds,input.batchIndex||0));
-          if(method==='POST'&&route==='/api/workspace/learn') {workspace.requireSource();workspace.completion();return json(res,{job:workspace.learning.create(input.sourceIds)});}
+          if(method==='POST'&&route==='/api/workspace/learn') {workspace.requireSource();workspace.completion({task:'analysis'});return json(res,{job:workspace.learning.create(input.sourceIds)});}
           const learning=route.match(/^\/api\/workspace\/learn\/([^/]+)$/);
-          if(method==='POST'&&learning) {if(input.action==='step'||!input.action){workspace.requireSource();workspace.completion();}return json(res,{job:await workspace.learning.act(decodeURIComponent(learning[1]),input.action||'step')});}
+          if(method==='POST'&&learning) {if(input.action==='step'||!input.action){workspace.requireSource();workspace.completion({task:'analysis'});}return json(res,{job:await workspace.learning.act(decodeURIComponent(learning[1]),input.action||'step')});}
           if(method==='POST'&&route==='/api/workspace/suggest-mode')return json(res,workspace.suggest(input));
           if(method==='POST'&&route==='/api/workspace/draft/preview')return json(res,workspace.preview(input));
           if(method==='POST'&&route==='/api/workspace/draft')return json(res,await workspace.draft(input));
           if(method==='POST'&&route==='/api/workspace/compare')return json(res,await workspace.compare(input));
           return json(res,{error:'Workspace endpoint not found.'},404);
         }
-        if(method==='GET'&&route==='/api/onboarding') {await chatgpt.restore();return json(res,{...harness.status(),chatgpt:chatgpt.status(),csrfToken});}
+        if(method==='GET'&&route==='/api/onboarding') {await chatgpt.restore();await claude.restore();return json(res,{...harness.status(),chatgpt:chatgpt.status(),claude:claude.status(),csrfToken});}
+        if(method==='POST'&&route==='/api/onboarding/claude') {const status=await claude.connect();return json(res,{model:harness.modelSession.status,claude:status});}
+        if(method==='DELETE'&&route==='/api/onboarding/claude') {const status=claude.disconnect();return json(res,{model:harness.modelSession.status,claude:status,notice:'Claude plan disconnected. Claude Code stays signed in on this computer.'});}
         if(method==='POST'&&route==='/api/onboarding/chatgpt')return json(res,await chatgpt.begin(`http://127.0.0.1:${port}`,input.accountId));
         if(method==='POST'&&route==='/api/onboarding/chatgpt/use') {await chatgpt.activate(input.accountId);return json(res,{model:harness.modelSession.status});}
         if(method==='POST'&&route==='/api/onboarding/chatgpt/ack') {chatgpt.acknowledge(input.accountId);return json(res,{ok:true});}
         if(method==='DELETE'&&route==='/api/onboarding/chatgpt')return json(res,await chatgpt.signOut(input.accountId));
         if(method==='POST'&&route==='/api/onboarding/model') {const result=await harness.verifyModel(input);chatgpt.pause();return json(res,result);}
-        if(method==='DELETE'&&route==='/api/onboarding/model') {if(harness.modelSession.status.authMode==='chatgpt')return json(res,await chatgpt.signOut());chatgpt.pause();return json(res,harness.forgetModel());}
+        if(method==='DELETE'&&route==='/api/onboarding/model') {if(harness.modelSession.status.authMode==='chatgpt')return json(res,await chatgpt.signOut());if(harness.modelSession.status.authMode==='claude-plan')claude.disconnect();chatgpt.pause();return json(res,harness.forgetModel());}
         if(method==='POST'&&route==='/api/onboarding/paste')return json(res,harness.paste(input));
         if(method==='POST'&&route==='/api/onboarding/start')return json(res,harness.start());
         if(method==='POST'&&route==='/api/onboarding/oauth/gmail')return json(res,harness.beginGoogleOAuth(`http://${req.headers.host}`));

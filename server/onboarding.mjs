@@ -57,7 +57,7 @@ export class Onboarding {
     const sources=this.getSources();const previous=this.store.readState().harness;
     const fingerprint=digest(JSON.stringify(sources.map(s=>[s.id,s.messages.map(m=>[m.id,m.text])])));
     const ready=this.modelSession.status.verified&&sources.length>0&&previous?.fingerprint===fingerprint;
-    return {model:{...this.modelSession.status,configured:this.modelSession.status.verified,storage:this.modelSession.status.authMode==='chatgpt'?'protected-local-file':'session'},sources:sources.map(summary),connections:{
+    return {model:{...this.modelSession.status,configured:this.modelSession.status.verified,storage:this.modelSession.status.authMode==='chatgpt'?'protected-local-file':this.modelSession.status.authMode==='claude-plan'?'claude-code':'session'},sources:sources.map(summary),connections:{
       gmail:{connected:this.connected.gmail,configured:!!(this.env.GOOGLE_CLIENT_ID||this.env.GMAIL_ACCESS_TOKEN),authMode:this.env.GOOGLE_CLIENT_ID?'oauth':'token',transport:'local-mcp',reason:'Uses your own Google OAuth app or authorized Gmail read-only access token.'},
       slack:{connected:this.connected.slack,configured:!!this.env.SLACK_USER_TOKEN,authMode:'token',transport:'local-mcp',reason:'Use a user OAuth token from your installed Slack app, with im:read and im:history. Only one-to-one conversations are read.'}
     },harness:{status:ready?'ready':'idle',sourceCount:sources.length,conversationCount:sources.length,messageCount:sources.reduce((n,s)=>n+s.messages.length,0),proposalCount:0,discoveryCount:ready?previous.discoveryCount:0},defaults:{openai:'',anthropic:''}};

@@ -1,8 +1,8 @@
 # Verification
 
-Checked on 17 October 2026 with Node 22.23.1.
+Checked on 18 October 2026 with Node 22.23.1.
 
-- `npm test`: 273 tests, covering local HTTP boundaries, source attribution and imports, personalization, drafting, feedback, provider errors, OAuth and streamed responses.
+- `npm test`: 285 tests, covering local HTTP boundaries, source attribution and imports, personalization, drafting, feedback, provider errors, OAuth and streamed responses.
 - `npm run check`: syntax and publishable-tree checks. Private data directories inside the checkout are refused; fixtures contain invented examples only.
 - Browser walkthroughs used an isolated temporary store and explicitly synthetic model responses. Verified import, outbound batch preview, review of proposed personalities/preferences/examples, drafting, revision, scoped feedback and blinded comparison. Synthetic responses do not establish live inference access or output quality.
 - Personality walkthroughs exercised multi-batch analysis, detailed proposals, manual editing, separate analysis/drafting models, preserved effort selection and resuming after a simulated output-limit failure.
@@ -14,6 +14,10 @@ OAuth tests exercise PKCE, one-use state, identity signatures and claims, callba
 The OAuth-return regression reproduces the browser's cross-site navigation metadata on the redirect home. Only top-level GET navigation to the public application shell is allowed. Cross-site API reads/writes, iframe requests, programmatic requests, other paths, non-GET methods and rebinding Hosts remain blocked. Both ChatGPT and Gmail redirects are covered.
 
 The official OpenAI discovery endpoint has been verified against the documented issuer, endpoints and RS256 support. Real account authorization and model-list access have been observed. Completed live subscription inference and personalization quality are not established by that check.
+
+## Claude plan
+
+Tests cover locating the CLI, the allowlisted child environment, sign-in checks for missing, signed-out and API-billing setups, the exact `claude -p` flags, content on stdin only, temporary directory removal, error categories from stream-json events, timeouts and cancellation, and per-task routing beside ChatGPT or an API key. End-to-end tests run a fake `claude` executable through the real process path. A browser walkthrough with that fake CLI covered connecting, the per-task model dialog, the baseline model picker, disconnecting and the signed-out message. The signed-out event shape was checked against Claude Code 2.1.299. A live signed-in plan request has not been verified.
 
 ## Personalization coverage and limits
 

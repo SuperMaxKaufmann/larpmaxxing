@@ -16,18 +16,29 @@ function jobError(job) {
   if(job.error&&job.errorDetails?.httpStatus===429&&!job.errorDetails.providerCode&&job.errorDetails.authMode!=='chatgpt')return 'The model provider returned HTTP 429. A rate, credit, or usage limit is blocking requests. Check API billing and limits before resuming. Completed batches remain saved.';
   return job.error;
 }
-function modelEfforts(modelId) {
-  const model=(data.model?.availableModels||[]).find(item=>typeof item!=='string'&&item.id===modelId);
+// A model choice is "provider|model": a ChatGPT and a Claude plan can be connected together.
+const routeKey = (provider, modelId) => provider && modelId ? `${provider}|${modelId}` : '';
+const parseRoute = key => { const at=String(key||'').indexOf('|'); return at>0?{provider:key.slice(0,at),modelId:key.slice(at+1)}:null; };
+function modelEntry(modelId,provider) { return (data.model?.availableModels||[]).find(item=>typeof item!=='string'&&item.id===modelId&&(!provider||!item.provider||item.provider===provider)); }
+function modelLabel(route) { const model=route&&modelEntry(route.model,route.provider); return model?.label||route?.model||'Select a model'; }
+function connectionLabel(route) { return modelEntry(route?.model,route?.provider)?.connection||(route?.provider==='claude-plan'?'Claude plan':data.model?.authMode==='chatgpt'?'ChatGPT plan':route?.provider==='anthropic'?'Anthropic':'OpenAI'); }
+function modelChoices(selected,{follow=false}={}) {
+  const groups=new Map();
+  for(const model of data.model?.availableModels||[]) {if(typeof model==='string')continue;const label=model.connection||model.provider||'Connected';if(!groups.has(label))groups.set(label,[]);groups.get(label).push(model);}
+  return `${follow?`<option value="" ${selected?'':'selected'}>Same as drafting</option>`:`<option value="" ${selected?'':'selected'}>Choose a model</option>`}${[...groups].map(([label,models])=>`<optgroup label="${esc(label)}">${models.map(model=>{const key=routeKey(model.provider,model.id);return `<option value="${esc(key)}" ${key===selected?'selected':''}>${esc(model.label||model.id)}</option>`;}).join('')}</optgroup>`).join('')}`;
+}
+function modelEfforts(modelId,provider) {
+  const model=modelEntry(modelId,provider);
   return ['default',...new Set((model?.efforts||[]).filter(effort=>effort!=='default'&&Object.hasOwn(effortNames,effort)))];
 }
-function validEffort(modelId,effort) { return modelEfforts(modelId).includes(effort)?effort:'default'; }
-function effortField(id,modelId,effort) {
-  const choices=modelEfforts(modelId),supported=choices.length>1;
-  return `<div id="${id}-control"><label class="field-label" for="${id}">Reasoning effort</label><select id="${id}" aria-describedby="${id}-hint" ${supported?'':'disabled'}>${options(choices.map(value=>[value,effortNames[value]]),validEffort(modelId,effort))}</select><p id="${id}-hint" class="input-hint">${supported?'Higher effort can take longer and cost more. Model default leaves the choice to the provider.':'This model has no verified effort control. It uses the provider’s default.'}</p></div>`;
+function validEffort(modelId,effort,provider) { return modelEfforts(modelId,provider).includes(effort)?effort:'default'; }
+function effortField(id,modelId,effort,provider) {
+  const choices=modelEfforts(modelId,provider),supported=choices.length>1;
+  return `<div id="${id}-control"><label class="field-label" for="${id}">Reasoning effort</label><select id="${id}" aria-describedby="${id}-hint" ${supported?'':'disabled'}>${options(choices.map(value=>[value,effortNames[value]]),validEffort(modelId,effort,provider))}</select><p id="${id}-hint" class="input-hint">${supported?'Higher effort can take longer and use more of your limits or credits. Model default leaves the choice to the provider.':'This model has no verified effort control. It uses the provider’s default.'}</p></div>`;
 }
-function updateEffortField(dialog,id,modelId,effort,onChange) {
-  const selected=validEffort(modelId,effort);
-  $(`#${id}-control`,dialog).outerHTML=effortField(id,modelId,selected);
+function updateEffortField(dialog,id,modelId,effort,onChange,provider) {
+  const selected=validEffort(modelId,effort,provider);
+  $(`#${id}-control`,dialog).outerHTML=effortField(id,modelId,selected,provider);
   $(`#${id}`,dialog).onchange=event=>onChange(event.target.value);
   return selected;
 }
@@ -76,9 +87,44 @@ function refsMarkup(record) {
   const refs=refsFor(record);
   return `<details class="record-evidence"><summary>Why this is here${refs.length?` · ${plural(refs.length,'reference')}`:''}</summary><p class="muted">${esc(record.basis||'User decision')} · ${esc(record.strength||'Not scored')} · ${date(record.date)}</p>${refs.length?refs.map(ref=>`<blockquote>${ref.excerpt?`<p>${esc(ref.excerpt)}</p>`:''}<footer>${esc(ref.title||ref.conversationId||ref.label||'Source reference')}${ref.messageId?` · ${esc(ref.messageId)}`:''}${ref.conversationId&&!ref.conversationId.startsWith('feedback:')?` <button type="button" class="text-button" data-ws="inspect" data-id="${esc(ref.conversationId)}">Inspect</button>`:''}</footer></blockquote>`).join(''):'<p class="muted">Added manually. No historical evidence claimed.</p>'}${record.reportedSources?.length?`<p class="muted">Chatbot report citations are unverified claims:</p><pre>${esc(JSON.stringify(record.reportedSources,null,2))}</pre>`:''}${record.conflicts?.length?`<div class="warning-box">Conflicting evidence: ${esc(record.conflicts.map(x=>typeof x==='string'?x:JSON.stringify(x)).join('; '))}</div>`:''}${record.conflictingEvidence?.length?`<div class="warning-box">${record.conflictingEvidence.map(e=>`<p>${esc(typeof e==='string'?e:e.excerpt||e.text||JSON.stringify(e))}</p>`).join('')}</div>`:''}${record.limitations?.length?`<p class="muted">${esc(record.limitations.join(' '))}</p>`:''}</details>`;
 }
+function planStatus() {
+  const plans=[...(data.model?.authMode==='chatgpt'?['Using ChatGPT plan · <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Manage usage ↗</a>']:[]),...(data.model?.claude?['Using Claude plan · <a href="https://claude.ai/settings/usage" target="_blank" rel="noopener noreferrer">Manage usage ↗</a>']:[])];
+  return plans.length?`<p class="plan-status">${plans.join('<span class="plan-separator"> · </span>')}</p>`:'';
+}
+const TASK_ROWS=[['drafting','Drafting','Plans and writes each draft.'],['critique','Critique','Reviews each draft against your intent.'],['analysis','Analysis','Learns from sources you select. Also the starting choice for baseline personalities.']];
+function taskEffortField(task,key,effort) {
+  const choice=parseRoute(key);
+  if(!choice)return `<div id="${task}-effort-control"><label class="field-label" for="${task}-effort">Reasoning effort</label><select id="${task}-effort" disabled><option>Same as drafting</option></select><p class="input-hint">Follows the drafting model and effort.</p></div>`;
+  return effortField(`${task}-effort`,choice.modelId,effort,choice.provider);
+}
+function showModelSettings() {
+  const tasks=data.model?.tasks||{},claude=data.model?.claude;
+  const picks=Object.fromEntries(TASK_ROWS.map(([task])=>{const route=tasks[task];const own=route&&(task==='drafting'||!route.inherited);return [task,{key:own?routeKey(route.provider,route.model):'',effort:own?route.effort||'default':'default'}];}));
+  const missing=TASK_ROWS.filter(([task])=>tasks[task]&&!tasks[task].inherited&&tasks[task].available===false).map(([,label])=>label);
+  const plans=[data.model?.authMode==='chatgpt'?`ChatGPT plan · ${esc(data.model.accountLabel)}`:'',claude?`Claude plan · ${esc(claude.accountLabel)}`:'',data.model?.verified&&!['chatgpt','claude-plan'].includes(data.model?.authMode)?`${esc(data.model.provider==='anthropic'?'Anthropic':'OpenAI')} API key`:''].filter(Boolean).join(' and ');
+  modal('The connected mind.',`<p class="dialog-description">Connected: ${plans||'nothing yet'}. Choose which model handles each task. Plan requests use your plan’s limits; API requests are billed by your provider.</p>${missing.length?`<p class="error-box">${esc(missing.join(', '))} ${missing.length===1?'uses':'use'} a model whose account isn’t connected. Reconnect it or choose another model.</p>`:''}<form id="model-choice">${TASK_ROWS.map(([task,label,hint])=>`<fieldset class="task-route"><legend>${label}</legend><p class="input-hint">${hint}</p><div class="form-grid"><div><label class="field-label" for="${task}-model">Model</label><select id="${task}-model">${modelChoices(picks[task].key,{follow:task!=='drafting'})}</select></div>${taskEffortField(task,picks[task].key,picks[task].effort)}</div></fieldset>`).join('')}<button class="button primary" type="submit">Save model choices</button></form><div class="claude-connection">${claude?`<p class="input-hint">Claude plan runs through Claude Code${claude.version?` ${esc(claude.version)}`:''} on this computer. <a href="https://claude.ai/settings/usage" target="_blank" rel="noopener noreferrer">Manage usage ↗</a></p><button class="text-button" type="button" id="disconnect-claude">Disconnect Claude plan</button>`:`<p class="input-hint">Have Claude Pro or Max? Add it to use Claude for some tasks. It runs through Claude Code on this computer, signed in with your own Claude account.</p><button class="button secondary" type="button" id="connect-claude">Add Claude plan</button>`}</div><p class="input-hint">Availability in the list does not guarantee inference access or billing readiness.</p><button class="text-button" type="button" id="change-model-key">Connection settings</button>`,dialog=>{
+    for(const [task] of TASK_ROWS) {
+      const bindEffort=()=>{const select=$(`#${task}-effort`,dialog);if(select&&!select.disabled)select.onchange=event=>{picks[task].effort=event.target.value;};};
+      bindEffort();
+      $(`#${task}-model`,dialog).onchange=event=>{const key=event.target.value,choice=parseRoute(key);picks[task]={key,effort:choice?validEffort(choice.modelId,picks[task].effort,choice.provider):'default'};$(`#${task}-effort-control`,dialog).outerHTML=taskEffortField(task,key,picks[task].effort);bindEffort();};
+    }
+    $('#model-choice',dialog).onsubmit=e=>{
+      e.preventDefault();
+      const drafting=parseRoute(picks.drafting.key);if(!drafting){$('#drafting-model',dialog).focus();return;}
+      const route=task=>{const choice=parseRoute(picks[task].key);return choice?{provider:choice.provider,modelId:choice.modelId,effort:validEffort(choice.modelId,picks[task].effort,choice.provider)}:null;};
+      run('model',async()=>{await deps.api('/api/workspace/model',{tasks:{drafting:route('drafting'),critique:route('critique'),analysis:route('analysis')}});await refresh();dialog.close();render();},{paint:false});
+    };
+    $('#connect-claude',dialog)?.addEventListener('click',()=>run('claude',async()=>{await deps.api('/api/onboarding/claude',{});await refresh();showModelSettings();deps.notify('Claude plan connected. Choose the tasks it should handle.');},{paint:false}));
+    $('#disconnect-claude',dialog)?.addEventListener('click',()=>run('claude',async()=>{const result=await deps.api('/api/onboarding/claude',{},'DELETE');if(!result.model?.verified){dialog.close();deps.changeModel();return;}await refresh();showModelSettings();deps.notify(result.notice);},{paint:false}));
+    $('#change-model-key',dialog).onclick=()=>{dialog.close();deps.changeModel();};
+    // The header shows the drafting model; repaint it once this dialog closes,
+    // unless the app has already left the workspace (the dialog is then detached).
+    dialog.addEventListener('close',()=>{if(dialog.isConnected)render();},{once:true});
+  });
+}
 function render() {
   if(!data)return;
-  $('#app').innerHTML = `<div class="workspace-shell"><header class="workspace-top"><a href="/" class="brand"><span class="brand-symbol">Λ</span>LARPMAXXING</a><nav aria-label="Workspace">${[['write','Write'],['voice','Your voice'],['sources','Sources']].map(([tab,label])=>`<button class="nav-item ${ui.tab===tab?'active':''}" data-tab="${tab}" ${ui.tab===tab?'aria-current="page"':''}>${label}${tab==='voice'&&[...data.profile.preferences,...data.profile.modes].some(p=>p.status==='proposed')?'<span class="nav-dot"></span>':''}</button>`).join('')}</nav><button class="model-indicator text-button" data-ws="model"><span class="status-dot"></span>${esc(data.model?.authMode==='chatgpt'?'ChatGPT plan':data.model?.provider==='anthropic'?'Anthropic':'OpenAI')}<span class="model-name"> / ${esc(data.model?.model||'Select a model')}</span></button></header><main id="main" class="workspace-main" tabindex="-1">${data.model?.authMode==='chatgpt'?'<p class="plan-status">Using ChatGPT plan · <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Manage usage ↗</a></p>':''}${ui.error?`<div class="error-box" role="alert">${esc(ui.error)}</div>`:''}${ui.tab==='write'?renderWrite():ui.tab==='voice'?renderVoice():renderSources()}</main><footer class="workspace-footer"><span>WRITE LIKE PLATO. EXIST LIKE DIONYSUS.</span><span>PRIVATE WORDS. DELIBERATE CHOICES.</span></footer></div><dialog id="workspace-dialog" class="workspace-dialog" aria-labelledby="workspace-dialog-title"></dialog>`;
+  $('#app').innerHTML = `<div class="workspace-shell"><header class="workspace-top"><a href="/" class="brand"><span class="brand-symbol">Λ</span>LARPMAXXING</a><nav aria-label="Workspace">${[['write','Write'],['voice','Your voice'],['sources','Sources']].map(([tab,label])=>`<button class="nav-item ${ui.tab===tab?'active':''}" data-tab="${tab}" ${ui.tab===tab?'aria-current="page"':''}>${label}${tab==='voice'&&[...data.profile.preferences,...data.profile.modes].some(p=>p.status==='proposed')?'<span class="nav-dot"></span>':''}</button>`).join('')}</nav><button class="model-indicator text-button" data-ws="model"><span class="status-dot"></span>${esc(connectionLabel(data.model?.tasks?.drafting))}<span class="model-name"> / ${esc(modelLabel(data.model?.tasks?.drafting))}</span></button></header><main id="main" class="workspace-main" tabindex="-1">${planStatus()}${ui.error?`<div class="error-box" role="alert">${esc(ui.error)}</div>`:''}${ui.tab==='write'?renderWrite():ui.tab==='voice'?renderVoice():renderSources()}</main><footer class="workspace-footer"><span>WRITE LIKE PLATO. EXIST LIKE DIONYSUS.</span><span>PRIVATE WORDS. DELIBERATE CHOICES.</span></footer></div><dialog id="workspace-dialog" class="workspace-dialog" aria-labelledby="workspace-dialog-title"></dialog>`;
   bind();
 }
 function renderWrite() {
@@ -222,7 +268,7 @@ async function draftRequest(revision='') {
   const request=currentRequest();
   if(!request.intent.trim())throw Error('Add what you want to say first.');
   if(!request.modeId)throw Error('Choose a reviewed personality first.');
-  if(!data.model?.model)throw Error('Select a generation model using the provider button above.');
+  if(!data.model?.tasks?.drafting?.model)throw Error('Select a drafting model using the model button above.');
   if(revision){request.previousDraft=ui.draftText;request.revision=revision;}
   const result=await deps.api('/api/workspace/draft',request);
   ui.draft={...result,request:result.request||request};ui.draftText=result.draft||'';ui.comparison=null;await refresh();
@@ -270,20 +316,11 @@ async function action(name,b) {
   if(name==='resume-personalities'){if(ui.personalityLearning||ui.busy)return;showPersonalityResume(data.personalityJobs.find(job=>job.id===b.dataset.id));return;}
   if(name==='cancel-import'){ui.cancelImport=true;return;}
   if(name==='load-draft'){const draft=data.drafts.find(d=>d.id===b.dataset.id);ui.draft=draft;ui.draftText=draft.draft||'';ui.manualMode=true;const request=draft.request||{};for(const key of ['intent','context','modeId','channel','language','formality','recipient','relationship','purpose'])if(request[key]!=null)ui[key]=request[key];ui.required=(request.requiredPhrases||[]).join('\n');render();return;}
-  if(name==='model') {
-    const available=(data.model?.availableModels||[]).map(m=>typeof m==='string'?[m,m]:[m.id,m.label||m.id]);
-    let selectedEffort=validEffort(data.model?.model,data.model?.effort||'default');
-    modal('The connected mind.',`<p class="dialog-description">${data.model?.authMode==='chatgpt'?`Using ChatGPT plan · ${esc(data.model.accountLabel)}. <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Manage usage ↗</a>`:`${esc(data.model?.provider)} API access is verified.`} Choose the default model and effort for drafting and selected-source learning. Baseline personality creation has its own choices. ${data.model?.authMode==='chatgpt'?'Eligible requests use your plan allowance or credits you authorize in ChatGPT.':'Inference costs are billed by your provider.'}</p><form id="model-choice"><div class="form-grid">${dropdown('Generation model','generation-model',[['','Choose a model'],...available],data.model?.model||'')}${effortField('generation-effort',data.model?.model,selectedEffort)}</div><button class="button primary" type="submit">Use model & effort</button></form><p class="input-hint">Availability in the list does not guarantee inference access or billing readiness.</p><button class="text-button" id="change-model-key">Connection settings</button>`,dialog=>{
-      $('#generation-effort',dialog).onchange=event=>{selectedEffort=event.target.value;};
-      $('#generation-model',dialog).onchange=event=>{selectedEffort=updateEffortField(dialog,'generation-effort',event.target.value,selectedEffort,value=>{selectedEffort=value;});};
-      $('#model-choice',dialog).onsubmit=e=>{e.preventDefault();const modelId=$('#generation-model',dialog).value;if(!modelId){$('#generation-model',dialog).focus();return;}const effort=validEffort(modelId,selectedEffort);run('model',async()=>{await deps.api('/api/workspace/model',{modelId,effort});await refresh();dialog.close();render();},{paint:false});};
-      $('#change-model-key',dialog).onclick=()=>{dialog.close();deps.changeModel();};
-    });return;
-  }
+  if(name==='model') {showModelSettings();return;}
   if(name==='record-status') { await run(name,async()=>{const profile=cloneProfile();const record=profile[b.dataset.collection].find(r=>r.id===b.dataset.id);record.status=b.dataset.status;if(b.dataset.collection==='examples'&&record.kind==='sent'&&record.status==='accepted'){record.originalKind='sent';record.kind='approved';}await saveProfile(profile,'Decision saved.');});return; }
   if(name==='undo'){await run(name,async()=>{await deps.api('/api/profile/undo',{});await refresh();deps.notify('Last profile change undone.');});return;}
   if(name==='inspect'){await run(name,()=>inspectSource(b.dataset.id),{paint:false});return;}
-  if(name==='draft-preview'){await run(name,async()=>{const preview=await deps.api('/api/workspace/draft/preview',currentRequest());modal('What the model receives.',`<p class="dialog-description">Your selected provider receives this drafting payload. Planning, generation, and critique reuse it; later calls also include the plan and draft. Example facts are redacted where possible. Review for unintended details.</p>${preview.warnings?.map(x=>`<p class="input-hint">${esc(x)}</p>`).join('')||''}<pre class="payload-preview">${esc(JSON.stringify(preview.payload,null,2))}</pre>`);},{paint:false});return;}
+  if(name==='draft-preview'){await run(name,async()=>{const preview=await deps.api('/api/workspace/draft/preview',currentRequest());const routes=preview.routes||{};modal('What the model receives.',`<p class="dialog-description">Planning and generation send this payload to ${esc(connectionLabel(routes.drafting))} (${esc(modelLabel(routes.drafting))}); critique sends it to ${esc(connectionLabel(routes.critique))} (${esc(modelLabel(routes.critique))}). Later calls also include the plan and draft. Example facts are redacted where possible. Review for unintended details.</p>${preview.warnings?.map(x=>`<p class="input-hint">${esc(x)}</p>`).join('')||''}<pre class="payload-preview">${esc(JSON.stringify(preview.payload,null,2))}</pre>`);},{paint:false});return;}
   if(name==='suggest-mode'){await run(name,async()=>{ui.suggestion=await deps.api('/api/workspace/suggest-mode',currentRequest());ui.manualMode=false;if(ui.suggestion.modeId&&!ui.suggestion.ambiguous)ui.modeId=ui.suggestion.modeId;else ui.modeId='';});return;}
   if(name==='compare'){await run(name,async()=>{ui.comparison=await deps.api('/api/workspace/compare',currentRequest());});return;}
   if(name==='vote'){await run(name,async()=>{ui.comparison.voted=await deps.api('/api/evaluations',{comparisonId:ui.comparison.id,choice:b.dataset.side,note:''});});return;}
@@ -306,7 +343,7 @@ async function autoSuggest() {
 async function showLearningPreview(sourceIds,batchIndex) {
   const preview=await deps.api('/api/workspace/learn/preview',{sourceIds,batchIndex});
   const count=Number(preview.batchCount)||1,index=Number(preview.batchIndex)||0;
-  modal('Choose what leaves this computer.',`<p class="dialog-description">These selected excerpts go to ${esc(data.model?.provider)} to propose writing preferences and personalities. Incoming messages provide context. Sent messages are not assumed to be approved. Nothing is accepted automatically.</p><div class="preview-pagination"><span>Batch ${index+1} of ${count}</span><div><button class="text-button" id="preview-previous" ${index===0?'disabled':''}>Previous</button><button class="text-button" id="preview-next" ${index+1>=count?'disabled':''}>Next</button></div></div>${(preview.warnings||[]).map(w=>`<p class="input-hint">${esc(w)}</p>`).join('')}<details class="payload-detail"><summary>Inspect the exact content in this batch</summary><pre class="payload-preview">${esc(JSON.stringify(preview.payload,null,2))}</pre></details><p class="input-hint">Starting sends all ${count} selected ${count===1?'batch':'batches'}, one at a time. You can cancel between batches and resume later.</p><button class="button primary" id="begin-learning">Send selection & learn</button>`,dialog=>{
+  modal('Choose what leaves this computer.',`<p class="dialog-description">These selected excerpts go to ${esc(connectionLabel(data.model?.tasks?.analysis))} (${esc(modelLabel(data.model?.tasks?.analysis))}) to propose writing preferences and personalities. Incoming messages provide context. Sent messages are not assumed to be approved. Nothing is accepted automatically.</p><div class="preview-pagination"><span>Batch ${index+1} of ${count}</span><div><button class="text-button" id="preview-previous" ${index===0?'disabled':''}>Previous</button><button class="text-button" id="preview-next" ${index+1>=count?'disabled':''}>Next</button></div></div>${(preview.warnings||[]).map(w=>`<p class="input-hint">${esc(w)}</p>`).join('')}<details class="payload-detail"><summary>Inspect the exact content in this batch</summary><pre class="payload-preview">${esc(JSON.stringify(preview.payload,null,2))}</pre></details><p class="input-hint">Starting sends all ${count} selected ${count===1?'batch':'batches'}, one at a time. You can cancel between batches and resume later.</p><button class="button primary" id="begin-learning">Send selection & learn</button>`,dialog=>{
     for(const [id,next]of [['preview-previous',index-1],['preview-next',index+1]])$(`#${id}`,dialog).onclick=()=>run('preview-batch',()=>showLearningPreview(sourceIds,next),{paint:false});
     $('#begin-learning',dialog).onclick=async()=>{if(ui.learning||ui.busy)return;dialog.close();ui.busy='learning';ui.learning=true;render();try{const result=await deps.api('/api/workspace/learn',{sourceIds});await processLearning(result.job);}catch(e){ui.error=e.message;ui.busy='';ui.learning=false;render();}};
   });
@@ -333,35 +370,41 @@ async function processPersonalities(job) {
 }
 function showPersonalityResume(job) {
   if(!job)return;
-  const effort=validEffort(job.modelId,job.effort||'default');
-  modal('Resume your baseline.',`<p class="dialog-description">Continue with ${esc(job.modelId||'the selected model')}. ${Math.min(Number(job.processedBatches)||0,Number(job.batchCount)||0)} of ${Number(job.batchCount)||0} completed batches are retained.</p>${job.error?`<p class="error-box">${esc(jobError(job))}</p>`:''}<form id="personality-resume-form">${effortField('resume-effort',job.modelId,effort)}<p class="input-hint">This effort applies to the remaining analysis and synthesis. Provider charges apply to the remaining requests. No completed batch is repeated.</p><button type="submit" class="button primary">Resume analysis</button></form>`,dialog=>{
+  const effort=validEffort(job.modelId,job.effort||'default',job.provider);
+  modal('Resume your baseline.',`<p class="dialog-description">Continue with ${esc(job.modelId||'the selected model')}. ${Math.min(Number(job.processedBatches)||0,Number(job.batchCount)||0)} of ${Number(job.batchCount)||0} completed batches are retained.</p>${job.error?`<p class="error-box">${esc(jobError(job))}</p>`:''}<form id="personality-resume-form">${effortField('resume-effort',job.modelId,effort,job.provider)}<p class="input-hint">This effort applies to the remaining analysis and synthesis. Provider charges apply to the remaining requests. No completed batch is repeated.</p><button type="submit" class="button primary">Resume analysis</button></form>`,dialog=>{
     $('#personality-resume-form',dialog).onsubmit=async event=>{
       event.preventDefault();if(ui.personalityLearning||ui.busy)return;
-      const selectedEffort=validEffort(job.modelId,$('#resume-effort',dialog).value);
+      const selectedEffort=validEffort(job.modelId,$('#resume-effort',dialog).value,job.provider);
       dialog.close();ui.busy='personalities';
       try{const result=await deps.api(`/api/workspace/personalities/${encodeURIComponent(job.id)}`,{action:'resume',effort:selectedEffort});await processPersonalities(result.job);}
       catch(error){ui.error=error.message;ui.busy='';render();}
     };
   });
 }
+function baselineBilling(choice) {
+  const connection=modelEntry(choice?.modelId,choice?.provider)?.connection||'';
+  return /plan$/.test(connection)?`Uses your ${connection} for this run. Plan limits apply.`:choice?'Uses your connected API key for this run. Provider charges apply.':'Choose a model for this run.';
+}
 async function showPersonalityPreview(batchIndex) {
   const preview=await deps.api('/api/workspace/personalities/preview',{batchIndex});
   const count=Number(preview.batchCount)||0,index=Number(preview.batchIndex)||0;
   const sources=Number(preview.counts?.sources??preview.totalSources)||0,messages=Number(preview.counts?.messages??preview.totalMessages)||0;
-  const available=(data.model?.availableModels||[]).map(m=>typeof m==='string'?[m,m]:[m.id,m.label||m.id]);
-  if(!available.some(([id])=>id===ui.personalityModel)){ui.personalityModel=data.model?.model||available[0]?.[0]||'';}
-  ui.personalityEffort=validEffort(ui.personalityModel,ui.personalityEffort);
+  const available=(data.model?.availableModels||[]).filter(m=>typeof m!=='string').map(m=>routeKey(m.provider,m.id));
+  const analysis=data.model?.tasks?.analysis;
+  if(!available.includes(ui.personalityModel)){ui.personalityModel=analysis?.available!==false&&available.includes(routeKey(analysis?.provider,analysis?.model))?routeKey(analysis.provider,analysis.model):available[0]||'';ui.personalityEffort=analysis?.effort||'default';}
+  const pick=parseRoute(ui.personalityModel);
+  ui.personalityEffort=validEffort(pick?.modelId,ui.personalityEffort,pick?.provider);
   const disclosures=Array.isArray(preview.synthesisDisclosures)?preview.synthesisDisclosures:preview.synthesisDisclosures?[preview.synthesisDisclosures]:[];
-  modal('Create your baseline personalities.',`<p class="dialog-description">Analyze all ${plural(sources,'imported source')} into 3–5 detailed personalities to review and fine-tune.</p><form id="personality-create-form"><div class="form-grid">${dropdown('Model for this analysis','personality-model',[['','Choose a model'],...available],ui.personalityModel)}${effortField('personality-effort',ui.personalityModel,ui.personalityEffort)}</div><p class="input-hint">${data.model?.authMode==='chatgpt'?'Using ChatGPT plan for this run. Plan and app limits apply.':'Uses your connected API key for this run. Provider charges apply.'} Your drafting model stays unchanged.</p><div class="baseline-preview-summary"><span>${plural(sources,'source')}</span><span>${plural(messages,'message')}</span><span>${plural(count,'analysis batch')} + synthesis</span></div><p class="muted">Reads the first ${Number(preview.limits?.excerpt||1800).toLocaleString()} characters of each message. Earlier batches are compressed into up to ${Number(preview.limits?.observations||10)} observations, so detail can be lost.</p><details class="payload-detail"><summary>Coverage & limits</summary><p class="muted">Includes all imported sources, regardless of search or selection in Sources. Incoming messages are context; unapproved drafts are not your voice. Closing this page pauses the queue after the current request; resume here later.</p>${(preview.warnings||[]).map(w=>`<p class="muted">${esc(w)}</p>`).join('')}</details>${count?`<div class="preview-pagination"><span>Batch ${index+1} of ${count}</span><div><button type="button" class="text-button" id="personality-preview-previous" ${index===0?'disabled':''}>Previous</button><button type="button" class="text-button" id="personality-preview-next" ${index+1>=count?'disabled':''}>Next</button></div></div>`:''}<details class="payload-detail"><summary>Inspect the content sent in this batch</summary><pre class="payload-preview">${esc(JSON.stringify(preview.payload,null,2))}</pre></details>${disclosures.length?`<details class="payload-detail"><summary>What synthesis receives</summary>${disclosures.map(item=>`<p class="muted">${esc(typeof item==='string'?item:JSON.stringify(item))}</p>`).join('')}</details>`:''}<p class="input-hint">Sparse evidence may support fewer than three personalities. All results remain proposals until you review them.</p><button type="submit" class="button primary" id="begin-personalities" ${!count||!available.length?'disabled':''}>Analyze all sources & create</button></form>`,dialog=>{
+  modal('Create your baseline personalities.',`<p class="dialog-description">Analyze all ${plural(sources,'imported source')} into 3–5 detailed personalities to review and fine-tune.</p><form id="personality-create-form"><div class="form-grid"><div><label class="field-label" for="personality-model">Model for this analysis</label><select id="personality-model">${modelChoices(ui.personalityModel)}</select></div>${effortField('personality-effort',pick?.modelId,ui.personalityEffort,pick?.provider)}</div><p class="input-hint" id="personality-billing">${baselineBilling(pick)} Your drafting model stays unchanged.</p><div class="baseline-preview-summary"><span>${plural(sources,'source')}</span><span>${plural(messages,'message')}</span><span>${plural(count,'analysis batch')} + synthesis</span></div><p class="muted">Reads the first ${Number(preview.limits?.excerpt||1800).toLocaleString()} characters of each message. Earlier batches are compressed into up to ${Number(preview.limits?.observations||10)} observations, so detail can be lost.</p><details class="payload-detail"><summary>Coverage & limits</summary><p class="muted">Includes all imported sources, regardless of search or selection in Sources. Incoming messages are context; unapproved drafts are not your voice. Closing this page pauses the queue after the current request; resume here later.</p>${(preview.warnings||[]).map(w=>`<p class="muted">${esc(w)}</p>`).join('')}</details>${count?`<div class="preview-pagination"><span>Batch ${index+1} of ${count}</span><div><button type="button" class="text-button" id="personality-preview-previous" ${index===0?'disabled':''}>Previous</button><button type="button" class="text-button" id="personality-preview-next" ${index+1>=count?'disabled':''}>Next</button></div></div>`:''}<details class="payload-detail"><summary>Inspect the content sent in this batch</summary><pre class="payload-preview">${esc(JSON.stringify(preview.payload,null,2))}</pre></details>${disclosures.length?`<details class="payload-detail"><summary>What synthesis receives</summary>${disclosures.map(item=>`<p class="muted">${esc(typeof item==='string'?item:JSON.stringify(item))}</p>`).join('')}</details>`:''}<p class="input-hint">Sparse evidence may support fewer than three personalities. All results remain proposals until you review them.</p><button type="submit" class="button primary" id="begin-personalities" ${!count||!available.length?'disabled':''}>Analyze all sources & create</button></form>`,dialog=>{
     $('#personality-effort',dialog).onchange=event=>{ui.personalityEffort=event.target.value;};
-    $('#personality-model',dialog).onchange=event=>{ui.personalityModel=event.target.value;ui.personalityEffort=updateEffortField(dialog,'personality-effort',ui.personalityModel,ui.personalityEffort,value=>{ui.personalityEffort=value;});};
+    $('#personality-model',dialog).onchange=event=>{ui.personalityModel=event.target.value;const choice=parseRoute(ui.personalityModel);ui.personalityEffort=updateEffortField(dialog,'personality-effort',choice?.modelId,ui.personalityEffort,value=>{ui.personalityEffort=value;},choice?.provider);$('#personality-billing',dialog).textContent=`${baselineBilling(choice)} Your drafting model stays unchanged.`;};
     for(const [id,next]of [['personality-preview-previous',index-1],['personality-preview-next',index+1]])$(`#${id}`,dialog)?.addEventListener('click',()=>run('personality-preview-batch',()=>showPersonalityPreview(next),{paint:false}));
     $('#personality-create-form',dialog).onsubmit=async event=>{
       event.preventDefault();if(ui.personalityLearning||ui.busy)return;
-      const modelId=$('#personality-model',dialog).value;
-      if(!modelId){$('#personality-model',dialog).focus();return;}
-      ui.personalityModel=modelId;ui.personalityEffort=validEffort(modelId,$('#personality-effort',dialog).value);dialog.close();ui.busy='personalities';ui.personalityLearning=true;ui.tab='voice';render();
-      try{const result=await deps.api('/api/workspace/personalities',{modelId,effort:ui.personalityEffort});await processPersonalities(result.job);}
+      const choice=parseRoute($('#personality-model',dialog).value);
+      if(!choice){$('#personality-model',dialog).focus();return;}
+      ui.personalityModel=routeKey(choice.provider,choice.modelId);ui.personalityEffort=validEffort(choice.modelId,$('#personality-effort',dialog).value,choice.provider);dialog.close();ui.busy='personalities';ui.personalityLearning=true;ui.tab='voice';render();
+      try{const result=await deps.api('/api/workspace/personalities',{provider:choice.provider,modelId:choice.modelId,effort:ui.personalityEffort});await processPersonalities(result.job);}
       catch(e){ui.error=e.message;ui.busy='';ui.personalityLearning=false;render();}
     };
   });

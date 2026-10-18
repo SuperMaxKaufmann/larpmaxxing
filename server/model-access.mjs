@@ -2,6 +2,8 @@
 // quotas, or permission to call the eventual generation endpoint.
 import {modelOptions, validateEffort} from './model-options.mjs';
 const PROVIDERS = new Set(['openai', 'anthropic']);
+const CLAUDE = 'claude-plan';
+export const TASKS = ['drafting', 'critique', 'analysis'];
 const ERRORS = {
   provider: 'Choose OpenAI or Anthropic.',
   key: 'Enter a valid API key without spaces or line breaks (maximum 4096 characters).',
@@ -13,6 +15,7 @@ const ERRORS = {
   unavailable: 'No available text model was found for this key. Check model access with your provider.',
   superseded: 'This verification was cancelled or replaced. Enter your key again to connect.',
   model: 'Choose a model from the models available to this connected key.',
+  task: 'Choose models for drafting, critique or analysis.',
 };
 
 class ModelAccessError extends Error {
@@ -109,10 +112,22 @@ function disconnectedStatus() {
   return { provider: null, model: '', effort: 'default', verified: false, validation: null, verifiedAt: null, availableModelCount: 0, availableModels: [] };
 }
 
-/** Credentials live only in this server instance, never in process.env or files. */
+function validRoute(route) {
+  return route && typeof route === 'object' && [...PROVIDERS, CLAUDE].includes(route.provider) && validModelId(route.model) && typeof route.effort === 'string' && route.effort.length <= 20;
+}
+
+/**
+ * Credentials live only in this server instance, never in process.env or files.
+ * One primary connection (ChatGPT or an API key) and a Claude plan can be
+ * connected together. Drafting, critique and analysis each follow a route to a
+ * connected model; critique and analysis follow drafting unless chosen.
+ */
 export class ModelSession {
   #credentials = null;
   #status = disconnectedStatus();
+  #claude = null;
+  #routes = {drafting: null, critique: null, analysis: null};
+  #saveRoutes = null;
   #revision = 0;
   #verifier;
   #options;
@@ -122,13 +137,99 @@ export class ModelSession {
     this.#options = { fetchImpl, env };
   }
 
-  get status() { return { ...this.#status, availableModels: this.#status.availableModels.map(model => ({ ...model, ...modelOptions(this.#status.provider, model.id) })) }; }
+  get status() {
+    const primary = this.#status.verified, claude = this.#claude;
+    const connection = this.#status.authMode === 'chatgpt' ? 'ChatGPT plan' : this.#status.provider === 'anthropic' ? 'Anthropic API' : 'OpenAI API';
+    const availableModels = [
+      ...(primary ? this.#status.availableModels.map(model => ({ ...model, provider: this.#status.provider, connection, ...modelOptions(this.#status.provider, model.id) })) : []),
+      ...(claude ? claude.models.map(model => ({ ...model, provider: CLAUDE, connection: 'Claude plan', ...modelOptions(CLAUDE, model.id) })) : []),
+    ];
+    const drafting = this.route('drafting');
+    // With only a Claude plan connected, it stands in as the primary connection.
+    const base = primary || !claude ? this.#status : { provider: CLAUDE, model: drafting.model, effort: drafting.effort, authMode: CLAUDE, accountLabel: claude.status.accountLabel, verified: true, validation: 'claude-code-auth-status', verifiedAt: claude.status.verifiedAt, availableModelCount: claude.models.length };
+    return { ...base, availableModels, claude: claude ? { ...claude.status } : null, tasks: drafting ? Object.fromEntries(TASKS.map(task => [task, this.route(task)])) : null };
+  }
 
   get revision() { return this.#revision; }
-  isCurrent(revision) { return revision === this.#revision && this.#status.verified; }
+  isCurrent(revision) { return revision === this.#revision && (this.#status.verified || !!this.#claude); }
 
-  // Server-internal only: never serialize this result into an HTTP response.
+  // Server-internal only: never serialize these results into an HTTP response.
   getCredentials() { return this.#credentials ? { ...this.#credentials } : null; }
+  credentialsFor(provider) {
+    if (provider === CLAUDE) return this.#claude ? { provider: CLAUDE, authMode: CLAUDE, run: this.#claude.run } : null;
+    return this.#status.verified && this.#status.provider === provider ? this.getCredentials() : null;
+  }
+  hasModel(provider, id) {
+    const models = provider === CLAUDE ? this.#claude?.models : this.#status.verified && this.#status.provider === provider ? this.#status.availableModels : null;
+    return !!models?.some(model => model.id === id);
+  }
+
+  /** The connected model a task uses. `available` is false when its account is missing. */
+  route(task = 'drafting') {
+    if (!TASKS.includes(task)) throw new ModelAccessError('task');
+    const chosen = this.#routes[task];
+    if (chosen) return { ...chosen, inherited: false, available: this.hasModel(chosen.provider, chosen.model) };
+    if (task !== 'drafting') { const drafting = this.route('drafting'); return drafting && { ...drafting, inherited: true }; }
+    const fallback = this.#status.verified ? { provider: this.#status.provider, model: this.#status.model, effort: this.#status.effort }
+      : this.#claude ? { provider: CLAUDE, model: this.#claude.models[0].id, effort: 'default' } : null;
+    return fallback && { ...fallback, inherited: false, available: this.hasModel(fallback.provider, fallback.model) };
+  }
+
+  /** Restores saved task routes. Routes to accounts not yet connected stay unavailable, never rerouted. */
+  useRouteStorage(saved, save) {
+    for (const task of TASKS) this.#routes[task] = validRoute(saved?.[task]) ? { provider: saved[task].provider, model: saved[task].model, effort: saved[task].effort } : null;
+    this.#saveRoutes = typeof save === 'function' ? save : null;
+  }
+
+  #dropRoutes(provider) {
+    let changed = false;
+    for (const task of TASKS) if (this.#routes[task]?.provider === provider) { this.#routes[task] = null; changed = true; }
+    if (changed) this.#saveRoutes?.({ ...this.#routes });
+  }
+
+  /**
+   * Sets routes for the tasks named in `choices`. `null` makes critique or
+   * analysis follow drafting again. A primary drafting choice becomes that
+   * connection's default model, as selectModel does.
+   */
+  setRoutes(choices) {
+    if (!this.status.verified) throw new ModelAccessError('model');
+    if (!choices || typeof choices !== 'object' || Array.isArray(choices) || !Object.keys(choices).length || Object.keys(choices).some(task => !TASKS.includes(task))) throw new ModelAccessError('task');
+    const routes = { ...this.#routes };
+    let primary = null;
+    for (const [task, choice] of Object.entries(choices)) {
+      if (choice === null && task !== 'drafting') { routes[task] = null; continue; }
+      if (!choice || typeof choice !== 'object' || !this.hasModel(choice.provider, choice.model)) throw new ModelAccessError('model');
+      const route = { provider: choice.provider, model: choice.model, effort: validateEffort(choice.provider, choice.model, choice.effort ?? 'default') };
+      if (task === 'drafting' && route.provider !== CLAUDE) { primary = route; routes.drafting = null; }
+      else routes[task] = route;
+    }
+    const primaryChanged = primary && (primary.model !== this.#status.model || primary.effort !== this.#status.effort);
+    if (primaryChanged || JSON.stringify(routes) !== JSON.stringify(this.#routes)) {
+      this.#revision++;
+      if (primaryChanged) {
+        this.#credentials = { ...this.#credentials, model: primary.model };
+        this.#status = { ...this.#status, model: primary.model, effort: primary.effort };
+        this.#credentials.saveSelection?.(primary.model, primary.effort);
+      }
+      if (JSON.stringify(routes) !== JSON.stringify(this.#routes)) { this.#routes = routes; this.#saveRoutes?.({ ...routes }); }
+    }
+    return this.status;
+  }
+
+  connectClaude({ models, run, version = '', plan = '', accountLabel = '', verifiedAt = new Date().toISOString() }) {
+    if (!Array.isArray(models) || !models.length || models.some(model => !validModelId(model?.id)) || typeof run !== 'function') throw new ModelAccessError('invalidResponse');
+    this.#revision++;
+    this.#claude = { models: models.map(({ id, label }) => ({ id, label: typeof label === 'string' ? label : id })), run, status: { version, plan, accountLabel, verifiedAt } };
+    return this.status;
+  }
+
+  disconnectClaude() {
+    this.#revision++;
+    this.#claude = null;
+    this.#dropRoutes(CLAUDE);
+    return this.status;
+  }
 
   connectChatGPT({models, model, effort, accountLabel, getAccessToken, saveSelection}) {
     if(!Array.isArray(models)||!models.length||models.some(m=>!validModelId(m.id))||typeof getAccessToken!=='function')throw new ModelAccessError('invalidResponse');
@@ -141,24 +242,21 @@ export class ModelSession {
   }
 
   selectModel(id, effort) {
-    if (!this.#credentials || !this.#status.availableModels.some(model => model.id === id)) throw new ModelAccessError('model');
-    const selectedEffort = validateEffort(this.#status.provider, id, effort === undefined ? (id === this.#status.model ? this.#status.effort : 'default') : effort);
-    if (id !== this.#status.model || selectedEffort !== this.#status.effort) {
-      this.#revision++;
-      this.#credentials = { ...this.#credentials, model: id };
-      this.#status = { ...this.#status, model: id, effort: selectedEffort };
-      this.#credentials.saveSelection?.(id,selectedEffort);
-    }
-    return this.status;
+    const provider = this.#status.verified ? this.#status.provider : this.#claude ? CLAUDE : null;
+    if (!provider || !this.hasModel(provider, id)) throw new ModelAccessError('model');
+    const current = this.route('drafting');
+    return this.setRoutes({ drafting: { provider, model: id, effort: effort === undefined ? (id === current.model && provider === current.provider ? current.effort : 'default') : effort } });
   }
 
+  /** Disconnects the primary connection. A connected Claude plan stays connected. */
   clear() {
     this.#revision++;
+    const provider = this.#status.provider;
     this.#credentials = null;
     this.#status = disconnectedStatus();
+    if (provider) this.#dropRoutes(provider);
     return this.status;
   }
-
   async verify(input) {
     this.clear();
     const revision = this.#revision;

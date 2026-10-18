@@ -23,8 +23,9 @@ function requestFrom(input,provider) {
 export class Workspace {
   constructor(store,onboarding,{complete=completeJSON,generate=generateDraft,fetchImpl=globalThis.fetch}={}) {
     this.store=store;this.onboarding=onboarding;this.session=onboarding.modelSession;this.complete=complete;this.generate=generate;this.fetchImpl=fetchImpl;
-    this.learning=new LearningService(store,{complete:(system,payload)=>this.completion()(system,payload)});
+    this.learning=new LearningService(store,{complete:(system,payload)=>this.completion({task:'analysis'})(system,payload)});
     this.personalities=new PersonalitiesService(store,{complete:(system,payload,selection)=>this.completion(selection)(system,payload)});
+    this.session.useRouteStorage?.(store.readState().modelSettings?.routes,routes=>store.mutate(state=>{state.modelSettings={...state.modelSettings,routes};}));
   }
   requireAccess(){this.onboarding.requireModel();}
   requireSource(){this.requireAccess();if(!this.onboarding.getSources().some(s=>s.messages.some(m=>m.role==='user'&&m.text?.trim())))throw fail('Add at least one source containing your writing before using the harness.',409);}
@@ -36,15 +37,24 @@ export class Workspace {
   source(id){this.requireAccess();const source=this.store.readState().sources.find(s=>s.id===id);if(!source)throw fail('Source not found.',404);return source;}
   search(query=''){this.requireAccess();if(typeof query!=='string'||query.length>300)throw fail('Use a search phrase of at most 300 characters.');const needle=query.normalize('NFC').toLowerCase().trim();const matches=this.store.readState().sources.filter(source=>!needle||`${source.title||''} ${source.source||''}`.normalize('NFC').toLowerCase().includes(needle)||(source.messages||[]).some(message=>String(message.text||'').normalize('NFC').toLowerCase().includes(needle)));return {sourceIds:matches.map(source=>source.id)};}
   selectModel(modelId,effort){this.requireAccess();return {model:this.session.selectModel(modelId,effort)};}
-  completion({profileVersion,modelId,provider,effort}={}){
-    this.requireAccess();const credentials=this.session.getCredentials();
-    if(provider&&provider!==credentials?.provider)throw fail('Reconnect the provider selected for this personality baseline before resuming.',409);
-    if(modelId){
-      if(!this.session.status.availableModels.some(model=>model.id===modelId))throw fail('Choose a model available to the connected account.',409);
-      credentials.model=modelId;
-    }
-    if(!credentials?.model)throw fail('Choose an available generation model first.',409);
-    const selectedEffort=validateEffort(credentials.provider,credentials.model,effort===undefined?(modelId?'default':this.session.status.effort):effort);
+  // Accepts {drafting,critique,analysis}: each {provider,modelId,effort}, or null to follow drafting.
+  setRoutes(tasks){
+    this.requireAccess();
+    if(!tasks||typeof tasks!=='object'||Array.isArray(tasks))throw fail('Choose a model for each task.');
+    const choices=Object.fromEntries(Object.entries(tasks).map(([task,choice])=>[task,choice&&typeof choice==='object'?{provider:choice.provider,model:choice.modelId,effort:choice.effort}:choice]));
+    return {model:this.session.setRoutes(choices)};
+  }
+  // A task uses its saved route. An explicit model (a personality job) names its own provider.
+  completion({profileVersion,modelId,provider,effort,task='drafting'}={}){
+    this.requireAccess();
+    const route=modelId?{provider:provider||this.session.status.availableModels.find(model=>model.id===modelId)?.provider,model:modelId}:this.session.route(task);
+    if(!modelId&&route?.model&&!route.available)throw fail(`The model chosen for ${task} (${route.model}) isn’t connected right now. Reconnect its account, or choose another model for ${task} in model settings.`,409);
+    const credentials=route?.provider?this.session.credentialsFor(route.provider):null;
+    if(provider&&!credentials)throw fail('Reconnect the provider selected for this personality baseline before resuming.',409);
+    if(!credentials||!route.model)throw fail('Choose an available generation model first.',409);
+    if(modelId&&!this.session.hasModel(route.provider,modelId))throw fail('Choose a model available to the connected account.',409);
+    credentials.model=route.model;
+    const selectedEffort=validateEffort(credentials.provider,credentials.model,effort===undefined?(modelId?'default':route.effort):effort);
     const revision=this.session.revision;
     const current=()=>{if(!this.session.isCurrent(revision))throw fail('Model access changed during this request. Nothing was saved; retry with the current model.',409);if(profileVersion&&this.store.readProfile().version!==profileVersion)throw fail('Your writing profile changed during this request. Nothing was saved; review it and generate again.',409);};
     const run=async(system,payload)=>{current();const result=await this.complete(credentials.provider,system,payload,{credentials,effort:selectedEffort,fetchImpl:this.fetchImpl});current();return result;};
@@ -53,33 +63,44 @@ export class Workspace {
   createPersonalities(input){
     this.requireSource();
     if(!input||typeof input.modelId!=='string'||!input.modelId)throw fail('Choose a model for the personality baseline.');
-    const selected=this.completion({modelId:input.modelId,effort:input.effort});
+    const selected=this.completion({modelId:input.modelId,provider:typeof input.provider==='string'?input.provider:undefined,effort:input.effort});
     return this.personalities.create({provider:selected.provider,modelId:selected.model,effort:selected.effort});
   }
   suggest(input){this.requireAccess();return suggestMode(this.store.readProfile().profile,input);}
-  preview(input){this.requireAccess();const request=requestFrom(input,this.session.status.provider);return {...previewDraft(this.store.readProfile().profile,request),provider:this.session.status.provider,model:this.session.status.model,effort:this.session.status.effort};}
+  preview(input){
+    this.requireAccess();
+    const {drafting,critique}=this.session.status.tasks||{};
+    const request=requestFrom(input,drafting?.provider);
+    const route=value=>value&&{provider:value.provider,model:value.model,effort:value.effort,inherited:value.inherited};
+    return {...previewDraft(this.store.readProfile().profile,request),provider:drafting?.provider,model:drafting?.model,effort:drafting?.effort,routes:{drafting:route(drafting),critique:route(critique)}};
+  }
+  // Planning and generation use the drafting route; the review uses the critique route.
+  draftingCompletions(profileVersion){
+    const drafting=this.completion({profileVersion,task:'drafting'}),critique=this.completion({profileVersion,task:'critique'});
+    return {drafting,critique,complete:(_provider,system,payload,{task}={})=>(task==='critique'?critique:drafting)(system,payload),current:()=>{drafting.current();critique.current();}};
+  }
   async draft(input){
     this.requireSource();
-    const current=this.store.readProfile();const complete=this.completion({profileVersion:current.version});
-    const request=requestFrom(input,complete.provider);
-    const result=await this.generate(current.profile,request,{complete:(_provider,system,payload)=>complete(system,payload)});
-    complete.current();
+    const current=this.store.readProfile();const {drafting,critique,complete,current:unchanged}=this.draftingCompletions(current.version);
+    const request=requestFrom(input,drafting.provider);
+    const result=await this.generate(current.profile,request,{complete});
+    unchanged();
     if(this.store.readProfile().version!==current.version)throw fail('Your writing profile changed during drafting. Review it and generate again.',409);
-    result.model=complete.model;result.effort=complete.effort;result.profileVersion=current.version;
+    result.model=drafting.model;result.effort=drafting.effort;result.critique={provider:critique.provider,model:critique.model,effort:critique.effort};result.profileVersion=current.version;
     if(result.draft)this.store.mutate(state=>state.drafts.push(result));
     return result;
   }
   async compare(input){
     this.requireSource();
-    const current=this.store.readProfile();const complete=this.completion({profileVersion:current.version});const request=requestFrom(input,complete.provider);
-    const options={complete:(_provider,system,payload)=>complete(system,payload)};
+    const current=this.store.readProfile();const {drafting,complete:routed,current:unchanged}=this.draftingCompletions(current.version);const request=requestFrom(input,drafting.provider);
+    const options={complete:routed};
     const personal=await this.generate(current.profile,{...request,personalized:true},options);
     const generic=await this.generate(current.profile,{...request,personalized:false},options);
-    complete.current();
+    unchanged();
     if(personal.needsClarification||generic.needsClarification)throw fail('This comparison needs clarification. Add the missing information to your intent and try again.');
     if(this.store.readProfile().version!==current.version)throw fail('Your profile changed during comparison. Please retry.',409);
     const flip=randomInt(2)===1;
-    const comparison={id:uid(),caseId:'personal-comparison',date:new Date().toISOString(),left:flip?personal:generic,right:flip?generic:personal,labels:flip?{left:'personalized',right:'generic'}:{left:'generic',right:'personalized'},profileVersion:current.version,demo:false,model:complete.model,effort:complete.effort};
+    const comparison={id:uid(),caseId:'personal-comparison',date:new Date().toISOString(),left:flip?personal:generic,right:flip?generic:personal,labels:flip?{left:'personalized',right:'generic'}:{left:'generic',right:'personalized'},profileVersion:current.version,demo:false,model:drafting.model,effort:drafting.effort};
     this.store.mutate(state=>state.comparisons.push(comparison));
     return {id:comparison.id,left:{draft:comparison.left.draft,checks:comparison.left.checks,review:comparison.left.review},right:{draft:comparison.right.draft,checks:comparison.right.checks,review:comparison.right.review},demo:false,notice:'Same intent, with and without your style guidance. Choose which sounds more like you; labels appear after your vote. This comparison is not added to your profile.'};
   }

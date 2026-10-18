@@ -8,7 +8,7 @@ The existing source, personality and drafting flows are unchanged. OAuth return 
 
 The server keeps its own `chatgpt-auth.json` beside the other private application files, outside the repository. It contains a stable random host ID and distinct registrations for each authorized account/workspace, with validated identity, issued client ID, tokens, expiry and scopes. Files are atomically replaced with Unix mode 0600 inside the private directory (0700). On Windows, protect the user data directory using account ACLs. This is not encrypted storage; keep backups private. Never copy this file into GitHub or a support transcript.
 
-The browser receives account labels and sign-in URLs, never access, refresh or ID tokens. No cookies, tokens, or authentication files are read from ChatGPT, Codex or Claude installations. Saved connections restore on startup. Near expiry the server serializes refresh requests and replaces rotating tokens together. Run only one server per private data directory; cross-process token refresh locking is not implemented.
+The browser receives account labels and sign-in URLs, never access, refresh or ID tokens. No cookies, tokens, or authentication files are read from ChatGPT, Codex or Claude installations. Claude plan requests run the user's signed-in Claude Code CLI, which handles its own credentials. Saved connections restore on startup. Near expiry the server serializes refresh requests and replaces rotating tokens together. Run only one server per private data directory; cross-process token refresh locking is not implemented.
 
 **Sign out** stops using and clears local tokens, attempts to revoke the renewable session, and retains only the account/client mapping and host ID for later sign-in. If remote revocation cannot be confirmed, the app tells you to disconnect it in ChatGPT settings. Temporary network errors preserve saved credentials; terminal refresh errors require sign-in again. Account switching never mixes another registration’s client ID or tokens.
 
@@ -21,7 +21,7 @@ The browser receives account labels and sign-in URLs, never access, refresh or I
 - Model catalog comes from `GET https://api.openai.com/v1/models`; only listed slugs are selectable. Catalog access is not a successful inference test.
 - Inference uses public `/v1/responses`, `store:false`, `stream:true`, explicit developer/user context and no tools. Unsupported output-token caps are omitted on this route. Completion must reach `response.completed`; partial streams and terminal usage failures cannot be saved as results.
 - Effort remains selectable for documented models. Usage can be restricted by the plan or an app-specific limit. The app does not silently switch to API billing.
-- No Claude Code bridge or direct Claude subscription login is implemented in this update.
+- A Claude plan connects separately through the user's own Claude Code CLI, never through this OAuth flow. See [Use your Claude plan](claude-plan.md).
 
 ## Verification
 
