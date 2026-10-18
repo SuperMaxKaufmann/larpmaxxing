@@ -88,3 +88,6 @@ body:before{opacity:.023;z-index:0;background:linear-gradient(118deg,transparent
 .personality-detail .mode-guidance h3.guidance-language { font-size: 12px; font-weight: 500; letter-spacing: .6px; margin: 22px 0 6px; color: var(--text, #dedbd2); }
 #source-audience { border: 1px solid #3c3c35; border-radius: 0; background: #10100f; width: 100%; padding: 13px 14px; color: var(--text); outline: none; font-size: 13px; margin-bottom: 8px; }
 #paste-form label[for=source-audience] { margin-top: 18px; }
+.sender-pick { margin: 16px 0 4px; padding: 14px 16px; border: 1px solid var(--stone, #b9b5a8); }
+.sender-pick > div { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.sender-pick .button { min-height: 34px; padding: 6px 12px; }

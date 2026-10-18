@@ -24,28 +24,81 @@ function dateRange(input) {
   return dates;
 }
 
-export function parsePastedEmails({text,authorship,ownEmail}={}) {
+const HEADER_WORDS=new Set(['from','von','to','an','cc','bcc','date','datum','sent','gesendet','subject','betreff','re','aw','fw','fwd','wg','note','p.s','ps','tel','phone','mobil','http','https']);
+const CHAT_LINE=/^\[?(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s?[AaPp]\.?[Mm]\.?)?)\]?\s*(?:[-–]\s*)?([^:\n]{1,60}?):\s?(.*)$/;
+const NAMED_LINE=/^([\p{L}][\p{L}\p{N} .'’()-]{0,40}?):\s+(\S.*)$/u;
+const nameOf=author=>String(author).replace(/<[^>]*>/g,'').replace(/["']/g,'').trim().toLowerCase();
+// Splits a pasted thread into authored parts: email headers, chat exports, or "Name: text" lines.
+function splitThread(text) {
+  const headers=[...text.matchAll(/^(?:From|Von):[\t ]*([^\n]*)/gim)];
+  if(headers.length)return {kind:'email',preamble:text.slice(0,headers[0].index).trim(),blocks:headers.map((header,i)=>({author:header[1].trim(),body:text.slice(header.index+header[0].length,headers[i+1]?.index??text.length)}))};
+  const lines=text.split('\n'),blocks=[];let preamble=[],chat=0,named=0;
+  for(const line of lines) {
+    const chatMatch=line.match(CHAT_LINE),namedMatch=!chatMatch&&line.match(NAMED_LINE);
+    const name=chatMatch?.[3]||namedMatch?.[1];
+    if(name&&!HEADER_WORDS.has(name.trim().toLowerCase())&&!/^\d/.test(name)) {
+      if(chatMatch)chat++;else named++;
+      blocks.push({author:name.trim(),body:(chatMatch?chatMatch[4]:namedMatch[2])+'\n',date:chatMatch?`${chatMatch[1]} ${chatMatch[2]}`:null});
+    } else if(blocks.length)blocks.at(-1).body+=line+'\n';
+    else preamble.push(line);
+  }
+  // Prose with an occasional colon is not a chat: require a structure that repeats.
+  const authors=new Set(blocks.map(block=>nameOf(block.author)));
+  if(chat>=2||named>=2&&(authors.size>=2||named>=3)&&!preamble.join('').trim())return {kind:'chat',preamble:preamble.join('\n').trim(),blocks};
+  return null;
+}
+function identityMatcher(identities) {
+  const emails=new Set(),names=new Set();
+  for(const identity of identities) {
+    if(typeof identity!=='string'||!identity.trim())continue;
+    const email=emailOf(identity);if(email)emails.add(email);
+    const name=nameOf(identity);if(name&&name!==email)names.add(name);
+  }
+  return author=>{const email=emailOf(author);return (email&&emails.has(email))||names.has(nameOf(author));};
+}
+
+/**
+ * Parses pasted writing. A thread needs no headers or address: senders are found
+ * from email headers, chat exports or "Name: text" lines, and the user's own
+ * sender is recognized from known identities, an explicit `me`, or `ownEmail`.
+ * When nothing identifies the user, the error lists the senders to choose from.
+ */
+export function parsePastedEmails({text,authorship,ownEmail,me,identities=[]}={}) {
   if(typeof text!=='string'||!/[\p{L}\p{N}]/u.test(text))throw fail('Paste at least one email with readable text.');
   if(text.length>200000)throw fail('Paste up to 200,000 characters at a time.');
   if(!['own','thread'].includes(authorship))throw fail('Tell us whether these are your messages or a conversation with other people.');
   const normalized=text.replace(/\r\n?/g,'\n').trim();
-  const headers=[...normalized.matchAll(/^(?:From|Von):[\t ]*([^\n]*)/gim)];
-  if(authorship==='thread'&&!emailOf(ownEmail))throw fail('Enter your email address so incoming messages stay separate from your writing.');
-  if(authorship==='thread'&&!headers.length)throw fail('This conversation needs From: or Von: headers to identify authors. Alternatively paste only your outgoing message.');
-  if(authorship==='own'&&headers.length>1)throw fail('This looks like a conversation with several senders. Choose “An email thread” and enter your email address.');
   const warnings=[];
-  const blocks=authorship==='thread'?headers.map((header,i)=>({body:normalized.slice(header.index+header[0].length,headers[i+1]?.index??normalized.length),author:header[1]})):[{body:normalized,author:'User-supplied outgoing message'}];
-  const messages=blocks.map((block,i)=>{
-    const body=block.body.replace(/^(?:From|Von|To|An|Cc|Bcc|Date|Datum|Sent|Gesendet|Subject|Betreff):[^\n]*\n?/gim,'').trim();
+  let thread=authorship==='thread'?splitThread(normalized):null;
+  if(authorship==='own') {
+    // "Only my messages" that clearly contains several senders is handled as a thread.
+    const split=splitThread(normalized);
+    if(split&&new Set(split.blocks.map(block=>nameOf(block.author))).size>1)thread=split;
+  }
+  if((authorship==='thread'||thread)&&!thread)throw fail('Couldn’t tell who wrote which part. Paste it with the sender names, as copied from your mail or chat app, or choose “Only my outgoing messages” if it is all yours.');
+  let messages;
+  if(thread) {
+    const explicit=typeof ownEmail==='string'&&emailOf(ownEmail)?ownEmail:'';
+    const mine=explicit?(author=>emailOf(author)===emailOf(explicit)&&!!emailOf(explicit)):identityMatcher([...identities,...(typeof me==='string'?[me]:[])]);
+    const senders=[...new Map(thread.blocks.map(block=>[nameOf(block.author),block.author])).values()];
+    if(!explicit&&!thread.blocks.some(block=>mine(block.author)))throw Object.assign(fail('Which of these senders is you? Choose once; next time it is recognized automatically.',409),{code:'choose_sender',senders:senders.slice(0,20)});
+    if(thread.preamble)warnings.push('Unattributed text before the first sender was excluded.');
+    messages=thread.blocks.map((block,i)=>{
+      const body=block.body.replace(/^(?:From|Von|To|An|Cc|Bcc|Date|Datum|Sent|Gesendet|Subject|Betreff):[^\n]*\n?/gim,'').trim();
+      const cleaned=separateQuotedContent(body);
+      const own=mine(block.author);
+      return {id:`paste-message-${digest(`${i}:${block.author}:${body}`)}`,role:own?'user':'incoming',kind:own?'user-written':'incoming',text:cleaned.text,rawText:body,author:block.author,date:null,metadata:{attribution:own?(explicit?'user-specified-email-match':'recognized-sender'):'other-sender',excludedFragments:cleaned.excludedFragments}};
+    });
+  } else {
+    const body=normalized.replace(/^(?:From|Von|To|An|Cc|Bcc|Date|Datum|Sent|Gesendet|Subject|Betreff):[^\n]*\n?/gim,'').trim();
     const cleaned=separateQuotedContent(body);
-    const own=authorship==='own'||emailOf(block.author)===emailOf(ownEmail);
-    return {id:`paste-message-${digest(`${i}:${block.author}:${body}`)}`,role:own?'user':'incoming',kind:own?'user-written':'incoming',text:cleaned.text,rawText:body,author:block.author,date:null,metadata:{attribution:authorship==='own'?'user-asserted-outgoing':own?'user-specified-email-match':'other-sender',excludedFragments:cleaned.excludedFragments}};
-  }).filter(message=>message.text.trim());
+    messages=[{id:`paste-message-${digest(`0:User-supplied outgoing message:${body}`)}`,role:'user',kind:'user-written',text:cleaned.text,rawText:body,author:'User-supplied outgoing message',date:null,metadata:{attribution:'user-asserted-outgoing',excludedFragments:cleaned.excludedFragments}}];
+  }
+  messages=messages.filter(message=>message.text.trim());
   if(!messages.length)throw fail('Only quoted or empty content was found. Paste some authored email text.');
   if(!messages.some(m=>m.role==='user'))warnings.push('No message matched your email address. This source provides context but cannot yet teach your writing style.');
-  if(headers.length&&normalized.slice(0,headers[0].index).trim()&&authorship==='thread')warnings.push('Unattributed text before the first From: header was excluded.');
-  const title=normalized.match(/^(?:Subject|Betreff):[\t ]*(.+)$/im)?.[1]||`Pasted ${authorship==='own'?'email':'conversation'}`;
-  return {conversations:[{id:`paste-${digest(normalized+'|'+authorship+'|'+emailOf(ownEmail))}`,title:title.slice(0,160),source:'pasted-email',messages}],warnings};
+  const title=normalized.match(/^(?:Subject|Betreff):[\t ]*(.+)$/im)?.[1]||`Pasted ${thread?'conversation':'email'}`;
+  return {conversations:[{id:`paste-${digest(normalized+'|'+authorship+'|'+emailOf(ownEmail||''))}`,title:title.slice(0,160),source:'pasted-email',messages}],warnings,recognized:thread?[...new Set(thread.blocks.filter(block=>messages.some(m=>m.author===block.author&&m.role==='user')).map(block=>block.author))]:[]};
 }
 
 export class Onboarding {
@@ -76,7 +129,15 @@ export class Onboarding {
     this.store.mutate(s=>{for(const source of s.sources)if(ids.has(source.id)){source.onboardingEligible=true;if(audience)source.audience=audience;}delete s.harness;});
     const sources=this.getSources();return {addedCount:sources.filter(s=>!before.has(s.id)).length,sources:sources.map(summary),warnings:result.warnings||[]};
   }
-  paste(input){this.requireModel();const audience=audienceNote(input?.audience);return this.ingest(parsePastedEmails(input),{audience});}
+  // Who the user is in pasted threads: senders they confirmed, plus their own Gmail/Slack authors.
+  identities(){const state=this.store.readState();return [...new Set([...(state.identities||[]),...state.sources.flatMap(s=>(s.messages||[]).filter(m=>m.role==='user'&&m.author&&!/^User-supplied/.test(m.author)).map(m=>m.author))])].slice(0,200);}
+  paste(input){
+    this.requireModel();const audience=audienceNote(input?.audience);
+    const me=typeof input?.me==='string'&&input.me.trim()&&input.me.length<=200?input.me.trim():undefined;
+    const parsed=parsePastedEmails({...input,me,identities:this.identities()});
+    if(me)this.store.mutate(state=>{state.identities=[...new Set([...(state.identities||[]),me])].slice(-50);});
+    return this.ingest(parsed,{audience});
+  }
   async connect(provider,{token}={}) {
     this.requireModel();if(!['gmail','slack'].includes(provider))throw fail('Unknown source.');
     const sequence=++this.generations[provider];

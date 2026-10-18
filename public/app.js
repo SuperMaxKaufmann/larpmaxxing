@@ -10,7 +10,7 @@ const icons = {
 };
 const icon = name => `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">${icons[name] || ''}</svg>`;
 let state;
-const ui = { provider: 'openai', source: 'paste', editingAccess: false, managingSources: window.location.hash === '#sources', text: '', audience: '', authorship: '', ownEmail: '', after: '', before: '', dms: null, dmCursor: null, selectedDms: new Set(), error: '', pending: '', connection: null, dialogError: '', warnings: [] };
+const ui = { provider: 'openai', source: 'paste', editingAccess: false, managingSources: window.location.hash === '#sources', text: '', audience: '', senders: null, authorship: '', ownEmail: '', after: '', before: '', dms: null, dmCursor: null, selectedDms: new Set(), error: '', pending: '', connection: null, dialogError: '', warnings: [] };
 let toastTimer;
 
 async function api(path, body, method) {
@@ -20,7 +20,7 @@ async function api(path, body, method) {
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || `The request failed (${response.status}). Please try again.`);
+  if (!response.ok) throw Object.assign(new Error(result.error || `The request failed (${response.status}). Please try again.`), { data: result });
   return result;
 }
 async function refresh() {
@@ -105,7 +105,7 @@ function renderSources() {
   return `<div class="model-summary"><div><span class="status-dot"></span>${esc(connectedName())}<span class="summary-muted"> / connected</span></div><div class="summary-actions"><button type="button" class="text-button" data-action="change-model" ${disabled()}>Change</button><button type="button" class="text-button" data-action="forget-model" ${disabled()}>Disconnect model</button></div></div><div class="panel source-panel"><div class="panel-marker mono">02 / YOUR WRITING</div><h2>Bring your words.</h2><p class="panel-description">Paste conversations in batches and say who they’re with,<br>or connect Gmail. Add more anytime.</p><div class="source-tabs" role="tablist" aria-label="Source type">${[['paste','Paste conversations'],['gmail','Gmail']].map(([value,label]) => `<button type="button" role="tab" id="tab-${value}" aria-controls="source-content" aria-selected="${ui.source === value}" tabindex="${ui.source === value ? '0' : '-1'}" class="${ui.source === value ? 'active' : ''}" data-source="${value}" ${disabled()}>${icon(value)}${label}</button>`).join('')}</div><div role="tabpanel" id="source-content" aria-labelledby="tab-${ui.source}">${ui.source === 'gmail' ? renderIntegration('gmail') : renderPaste()}</div>${renderWarnings()}${renderSourceList()}</div><div class="launch-row"><div class="launch-info"><span class="status-dot ${ownMessageCount() ? '' : 'off'}"></span><span>${ownMessageCount() ? `${state.sources.length} source${state.sources.length === 1 ? '' : 's'} loaded` : state.sources.length ? 'Add a message you wrote' : 'Waiting for your first source'}</span></div><button class="button primary" data-action="start" ${disabled(!ownMessageCount())}>${buttonText('Start harness', 'Preparing your sources…', 'start')}</button></div><div class="footnote"><span>↳</span><p>Sources stay on this computer. This step prepares evidence locally; no messages are sent to your model.</p></div>`;
 }
 function renderPaste() {
-  return `<form id="paste-form"><label class="field-label" for="source-text">Your conversations</label><textarea id="source-text" name="text" rows="8" placeholder="Paste one or many conversations: emails you sent, chats, whole threads…" required ${disabled()}>${esc(ui.text)}</textarea><label class="field-label" for="source-audience">Who are these with? <span>a few words</span></label><input id="source-audience" maxlength="300" value="${esc(ui.audience)}" placeholder="e.g. my boss · close friends · recruiters I don’t know" ${disabled()}><p class="input-hint">This helps group your personalities by who you’re talking to. Paste one group at a time, then add the next.</p><fieldset class="authorship"><legend>Whose words are these?</legend><label><input type="radio" name="authorship" value="own" ${ui.authorship === 'own' ? 'checked' : ''} required ${disabled()}>Only my outgoing messages</label><label><input type="radio" name="authorship" value="thread" ${ui.authorship === 'thread' ? 'checked' : ''} required ${disabled()}>A thread with other people</label></fieldset>${ui.authorship === 'thread' ? `<div class="thread-identity"><label class="field-label" for="own-email">Your email address in this thread</label><input type="email" id="own-email" name="ownEmail" value="${esc(ui.ownEmail)}" placeholder="you@example.com" required ${disabled()}><p class="input-hint">Keep From: / To: headers so the harness can separate your words from theirs.</p></div>` : ''}<div class="import-row"><p class="input-hint">Your own messages teach the voice.<br>Incoming messages are context.</p><button class="button secondary" type="submit" ${disabled()}>${buttonText('Add source', 'Adding…', 'paste')}</button></div></form>`;
+  return `<form id="paste-form"><label class="field-label" for="source-text">Your conversations</label><textarea id="source-text" name="text" rows="8" placeholder="Paste one or many conversations: emails you sent, chats, whole threads…" required ${disabled()}>${esc(ui.text)}</textarea><label class="field-label" for="source-audience">Who are these with? <span>a few words</span></label><input id="source-audience" maxlength="300" value="${esc(ui.audience)}" placeholder="e.g. my boss · close friends · recruiters I don’t know" ${disabled()}><p class="input-hint">This helps group your personalities by who you’re talking to. Paste one group at a time, then add the next.</p><fieldset class="authorship"><legend>Whose words are these?</legend><label><input type="radio" name="authorship" value="own" ${ui.authorship === 'own' ? 'checked' : ''} required ${disabled()}>Only my outgoing messages</label><label><input type="radio" name="authorship" value="thread" ${ui.authorship === 'thread' ? 'checked' : ''} required ${disabled()}>A thread with other people</label></fieldset>${ui.authorship === 'thread' ? '<p class="input-hint">Paste it as copied from your mail or chat app. Your messages are recognized automatically; the first time, you may be asked which sender is you.</p>' : ''}${ui.senders ? `<div class="sender-pick" role="group" aria-label="Which sender is you?"><p class="field-label">Which of these is you?</p><div>${ui.senders.map(sender => `<button type="button" class="button secondary" data-action="pick-me" data-name="${esc(sender)}" ${disabled()}>${esc(sender)}</button>`).join('')}</div><p class="input-hint">Remembered for future pastes.</p></div>` : ''}<div class="import-row"><p class="input-hint">Your own messages teach the voice.<br>Incoming messages are context.</p><button class="button secondary" type="submit" ${disabled()}>${buttonText('Add source', 'Adding…', 'paste')}</button></div></form>`;
 }
 function renderTimeframe() {
   return `<details class="timeframe" ${ui.after || ui.before ? 'open' : ''}><summary>Limit by date <span>optional</span></summary><div class="date-grid"><div><label class="field-label" for="date-after">From</label><input id="date-after" type="date" value="${esc(ui.after)}" ${disabled()}></div><div><label class="field-label" for="date-before">To</label><input id="date-before" type="date" value="${esc(ui.before)}" ${disabled()}></div></div><p class="input-hint">Includes both dates (UTC).</p></details>`;
@@ -210,29 +210,34 @@ function bind() {
     });
   });
   $('#source-text')?.addEventListener('input', event => ui.text = event.target.value);
-  $('#own-email')?.addEventListener('input', event => ui.ownEmail = event.target.value);
   $('#source-audience')?.addEventListener('input', event => ui.audience = event.target.value);
-  $$('input[name="authorship"]').forEach(input => input.addEventListener('change', () => { ui.authorship = input.value; render(); }));
+  $$('input[name="authorship"]').forEach(input => input.addEventListener('change', () => { ui.authorship = input.value; ui.senders = null; render(); }));
   $('#date-after')?.addEventListener('change', event => ui.after = event.target.value);
   $('#date-before')?.addEventListener('change', event => ui.before = event.target.value);
   $$('input[name="dm"]').forEach(input => input.addEventListener('change', () => { input.checked ? ui.selectedDms.add(input.value) : ui.selectedDms.delete(input.value); render(); }));
   $('#paste-form')?.addEventListener('submit', async event => {
     event.preventDefault();
     if (!ui.text.trim()) { ui.error = 'Paste at least one message before adding this source.'; render(); return; }
-    if (!ui.authorship) { ui.error = 'Identify which messages are yours before importing.'; render(); return; }
+    if (!ui.authorship) { ui.error = 'Choose whether these are only your messages or a thread.'; render(); return; }
+    await pasteSource();
+  });
+  async function pasteSource(me) {
     await run('paste', async () => {
-      const result = await api('/api/onboarding/paste', { text: ui.text, authorship: ui.authorship, audience: ui.audience, ...(ui.authorship === 'thread' ? { ownEmail: ui.ownEmail } : {}) });
-      ui.text = ''; ui.audience = '';
+      let result;
+      try { result = await api('/api/onboarding/paste', { text: ui.text, authorship: ui.authorship, audience: ui.audience, ...(me ? { me } : {}) }); }
+      catch (error) { if (error.data?.code === 'choose_sender') { ui.senders = error.data.senders; return; } throw error; }
+      ui.text = ''; ui.audience = ''; ui.senders = null;
       ui.warnings = result.warnings || [];
       await refresh();
       notify(result.addedCount === 0 ? 'Already imported. Duplicate evidence was skipped.' : 'Source added.');
     });
-  });
+  }
   $$('[data-action]').forEach(button => button.addEventListener('click', async () => {
     const action = button.dataset.action;
     if (action === 'chatgpt') { await run('chatgpt',async()=>{const result=await api('/api/onboarding/chatgpt',{accountId:button.dataset.id||null});const url=new URL(result.url);if(url.origin!=='https://auth.openai.com')throw Error('Invalid ChatGPT sign-in address.');window.location.assign(url.href);});return; }
     if (action === 'use-chatgpt') { await run('chatgpt',async()=>{await api('/api/onboarding/chatgpt/use',{accountId:button.dataset.id});ui.editingAccess=false;await refresh();notify('Using your ChatGPT plan.');});return; }
     if (action === 'signout-chatgpt') { await run('chatgpt',async()=>{const result=await api('/api/onboarding/chatgpt',{accountId:button.dataset.id},'DELETE');await refresh();notify(result.notice);});return; }
+    if (action === 'pick-me') { await pasteSource(button.dataset.name); return; }
     if (action === 'claude') { await run('claude',async()=>{try{await api('/api/onboarding/claude',{});}finally{await refresh();}ui.editingAccess=false;render();notify('Using your Claude plan through Claude Code.');});return; }
     if (action === 'disconnect-claude') { await run('claude',async()=>{const result=await api('/api/onboarding/claude',{},'DELETE');await refresh();notify(result.notice);});return; }
     if (action === 'change-model') { ui.editingAccess = true; ui.error = ''; render(); return; }

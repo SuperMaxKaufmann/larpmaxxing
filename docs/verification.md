@@ -2,7 +2,7 @@
 
 Checked on 18 October 2026 with Node 22.23.1.
 
-- `npm test`: 291 tests, covering local HTTP boundaries, source attribution and imports, personalization, drafting, feedback, provider errors, OAuth and streamed responses.
+- `npm test`: 292 tests, covering local HTTP boundaries, source attribution and imports, personalization, drafting, feedback, provider errors, OAuth and streamed responses.
 - `npm run check`: syntax and publishable-tree checks. Private data directories inside the checkout are refused; fixtures contain invented examples only.
 - Browser walkthroughs used an isolated temporary store and explicitly synthetic model responses. Verified import, outbound batch preview, review of proposed personalities/preferences/examples, drafting, revision, scoped feedback and blinded comparison. Synthetic responses do not establish live inference access or output quality.
 - Personality walkthroughs exercised multi-batch analysis, detailed proposals, manual editing, separate analysis/drafting models, preserved effort selection and resuming after a simulated output-limit failure.

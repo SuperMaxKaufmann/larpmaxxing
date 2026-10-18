@@ -169,3 +169,30 @@ test('the feedback agent adjusts the personality, the global context, or switche
   assert.equal(result.data.modeId,'friends');assert.equal(result.data.restart,true);assert.equal(store.readProfile().version,version,'switching saves nothing');
   assert.equal((await call('/api/workspace/adjust',{draftId:'missing',draftText:'x',complaint:'y'})).status,404);
 });
+
+test('pasted threads need no headers or address: senders are found and the user recognized',async t=>{
+  const {parsePastedEmails}=await import('../server/onboarding.mjs');
+  const whatsapp='[18.10.26, 14:31:02] Anna: Hast du morgen Zeit?\n[18.10.26, 14:32:10] Max: Ja, ab 10 passt.\nBis dann!\n[18.10.26, 14:33:00] Anna: Super';
+  const chosen=()=>{try{parsePastedEmails({text:whatsapp,authorship:'thread'});}catch(error){return error;}};
+  const error=chosen();
+  assert.equal(error.code,'choose_sender');assert.equal(error.status,409);assert.deepEqual(error.senders,['Anna','Max']);
+  const mine=parsePastedEmails({text:whatsapp,authorship:'thread',me:'Max'}).conversations[0].messages;
+  assert.deepEqual(mine.map(m=>[m.author,m.role]),[['Anna','incoming'],['Max','user'],['Anna','incoming']]);
+  assert.equal(mine[1].text,'Ja, ab 10 passt.\nBis dann!');
+  const plain=parsePastedEmails({text:'Anna: Can you send the deck?\nMax: Sure, tonight.',authorship:'thread',identities:['max']}).conversations[0].messages;
+  assert.deepEqual(plain.map(m=>m.role),['incoming','user']);
+  const email='From: Other <other@example.test>\nSubject: Update\nCould you review it?\n\nFrom: Max K <writer@example.test>\nYes, today.';
+  assert.deepEqual(parsePastedEmails({text:email,authorship:'thread',identities:['Max Kaufmann <writer@example.test>']}).conversations[0].messages.map(m=>m.role),['incoming','user'],'a known address from Gmail is recognized');
+  assert.equal((()=>{try{parsePastedEmails({text:email,authorship:'own'});}catch(e){return e.code;}})(),'choose_sender','“only mine” with several senders is read as a thread');
+  assert.throws(()=>parsePastedEmails({text:'Just some prose: with a colon in it.',authorship:'thread'}),/Couldn’t tell who wrote/);
+  assert.equal(parsePastedEmails({text:'Note: call back later. Thanks!',authorship:'own'}).conversations[0].messages[0].role,'user');
+
+  const {call,store}=await workspace(t,drafting());
+  const first=await call('/api/onboarding/paste',{authorship:'thread',audience:'friends',text:'Lena: Kommst du Samstag?\nMaxi: Klar, ich bringe Kuchen mit.'});
+  assert.equal(first.status,409);assert.deepEqual(first.data.senders,['Lena','Maxi']);assert.equal(first.data.code,'choose_sender');
+  assert.equal((await call('/api/onboarding/paste',{authorship:'thread',audience:'friends',me:'Maxi',text:'Lena: Kommst du Samstag?\nMaxi: Klar, ich bringe Kuchen mit.'})).status,200);
+  assert.deepEqual(store.readState().identities,['Maxi']);
+  const next=await call('/api/onboarding/paste',{authorship:'thread',audience:'friends',text:'Tom: Lust auf Kino?\nMaxi: Gern, welcher Film?'});
+  assert.equal(next.status,200,'remembered senders are recognized next time');
+  assert.equal(store.readState().sources.find(s=>s.title==='Pasted conversation'&&s.messages.some(m=>m.author==='Tom')).messages.find(m=>m.author==='Maxi').role,'user');
+});

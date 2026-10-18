@@ -46,7 +46,7 @@ Add **Never use em dashes** as a configurable hard rule with the banned literal 
 ## Accounts and imports
 
 - **Gmail:** an app-owned read-only local MCP adapter over the official Gmail API. Use your Google Desktop OAuth client or an authorized access token. Searches sent-mail threads and retains their incoming context. Date selections include both dates in UTC, checked per message. Bounded batches import up to 30 threads, subject to request/message limits.
-- **Paste:** paste conversations in batches with a short note on who they are with. Mark them as only your outgoing messages, or as a thread with `From:` / `Von:` headers plus your email address. Quote/signature cleanup is heuristic. WhatsApp and Slack chats come in this way too.
+- **Paste:** paste conversations in batches with a short note on who they are with, and say whether it is only your messages or a thread. Threads need no headers or address: senders are found from email headers, chat exports (WhatsApp `[date, time] Name:`) or `Name: text` lines. Your own messages are recognized from senders you confirmed before and from your Gmail address; the first time, the app asks once which sender is you and remembers it. Quote/signature cleanup is heuristic.
 - The Slack adapter and the chatbot-report and export import remain in the code but are no longer offered in the interface.
 
 These source adapters do not borrow ChatGPT, Claude or Codex connections, and do not connect to hosted Google/Slack MCP services. See [access feasibility](docs/access-feasibility.md) and [source setup](docs/mcp-sources.md) for official documentation.

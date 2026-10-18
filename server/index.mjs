@@ -159,7 +159,7 @@ export function createApp({store=new Store(),generate=generateDraft,onboarding,m
       const filename=files[url.pathname];if(!filename)return json(res,{error:'Not found.'},404);
       const type=filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':'text/html';
       res.writeHead(200,{'Content-Type':type+'; charset=utf-8','Cache-Control':'no-store'});res.end(fs.readFileSync(path.join(projectRoot,'public',filename)));
-    } catch(error) {if(!res.headersSent)json(res,{error:error.message||'Request failed.'},error.status||400);else res.end();}
+    } catch(error) {if(!res.headersSent)json(res,{error:error.message||'Request failed.',...(error.code==='choose_sender'&&Array.isArray(error.senders)?{code:error.code,senders:error.senders}:{})},error.status||400);else res.end();}
   });
   server.requestTimeout=180000;
   return server;
