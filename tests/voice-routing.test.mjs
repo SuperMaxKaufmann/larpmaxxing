@@ -182,7 +182,7 @@ test('pasted threads need no headers or address: senders are found and the user 
   const plain=parsePastedEmails({text:'Anna: Can you send the deck?\nMax: Sure, tonight.',authorship:'thread',identities:['max']}).conversations[0].messages;
   assert.deepEqual(plain.map(m=>m.role),['incoming','user']);
   const email='From: Other <other@example.test>\nSubject: Update\nCould you review it?\n\nFrom: Max K <writer@example.test>\nYes, today.';
-  assert.deepEqual(parsePastedEmails({text:email,authorship:'thread',identities:['Max Kaufmann <writer@example.test>']}).conversations[0].messages.map(m=>m.role),['incoming','user'],'a known address from Gmail is recognized');
+  assert.deepEqual(parsePastedEmails({text:email,authorship:'thread',identities:['Max Writer <writer@example.test>']}).conversations[0].messages.map(m=>m.role),['incoming','user'],'a known address from Gmail is recognized');
   assert.equal((()=>{try{parsePastedEmails({text:email,authorship:'own'});}catch(e){return e.code;}})(),'choose_sender','“only mine” with several senders is read as a thread');
   assert.throws(()=>parsePastedEmails({text:'Just some prose: with a colon in it.',authorship:'thread'}),/Couldn’t tell who wrote/);
   assert.equal(parsePastedEmails({text:'Note: call back later. Thanks!',authorship:'own'}).conversations[0].messages[0].role,'user');
