@@ -48,7 +48,7 @@ test('profile changes during inference prevent stale evidence or obsolete rules 
  let release,started;
  const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r);
  const {post,store}=await app(t,{generate:async()=>{started();await gate;return {id:'stale',draft:'Old profile result',appliedPreferences:[],usedExamples:[]};}});
- const pending=post('/api/draft',{intent:'Synthetic content.'});await ready;
+ const pending=post('/api/draft',{intent:'Synthetic content.',modeId:'synthetic',channel:'email',language:'en'});await ready;
  const current=store.readProfile();current.profile.preferences.push({id:'new',text:'Never use em dashes.',scope:{type:'global',value:''},category:'hard',status:'accepted',banned:['—']});store.saveProfile(current.profile,current.version);
  release();const response=await pending;assert.equal(response.status,409);assert.equal(store.readState().drafts.length,0);
 });

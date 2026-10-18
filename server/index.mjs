@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {pathToFileURL} from 'node:url';
-import {Store,projectRoot,uid} from './storage.mjs';
+import {Store,projectRoot,uid,parseProfile} from './storage.mjs';
+import {assertPersonalityLimit} from './personalities.mjs';
 import {providerStatus} from './providers.mjs';
 import {integrationStatus} from './integrations.mjs';
 import {suggestMode,generateDraft} from './drafting.mjs';
@@ -82,6 +83,9 @@ export function createApp({store=new Store(),generate=generateDraft,onboarding,m
           if(method==='POST'&&route==='/api/workspace/draft/preview')return json(res,workspace.preview(input));
           if(method==='POST'&&route==='/api/workspace/draft')return json(res,await workspace.draft(input));
           if(method==='POST'&&route==='/api/workspace/compare')return json(res,await workspace.compare(input));
+          if(method==='POST'&&route==='/api/workspace/adjust')return json(res,await workspace.adjust(input));
+          if(method==='POST'&&route==='/api/workspace/adjust/apply')return json(res,workspace.applyAdjustment(input));
+          if(method==='POST'&&route==='/api/workspace/global-context')return json(res,workspace.saveGlobalContext(input));
           return json(res,{error:'Workspace endpoint not found.'},404);
         }
         if(method==='GET'&&route==='/api/onboarding') {await chatgpt.restore();await claude.restore();return json(res,{...harness.status(),chatgpt:chatgpt.status(),claude:claude.status(),csrfToken});}
@@ -116,8 +120,8 @@ export function createApp({store=new Store(),generate=generateDraft,onboarding,m
         if(method==='POST'&&route.startsWith('/api/jobs/'))return json(res,{job:stepImport(store,decodeURIComponent(route.slice('/api/jobs/'.length)),input.action)});
         if(method==='POST'&&route==='/api/extract')return json(res,extractSelected(store,input.sourceIds));
         if(method==='DELETE'&&route.startsWith('/api/sources/'))return json(res,deleteSource(store,decodeURIComponent(route.slice('/api/sources/'.length)),input.derivedAction));
-        if(method==='POST'&&route==='/api/profile')return json(res,store.saveProfile(input.profile,input.version));
-        if(method==='PUT'&&route==='/api/profile/markdown')return json(res,store.saveMarkdown(input.markdown,input.version));
+        if(method==='POST'&&route==='/api/profile') {assertPersonalityLimit(input.profile,store.readProfile().profile);return json(res,store.saveProfile(input.profile,input.version));}
+        if(method==='PUT'&&route==='/api/profile/markdown') {assertPersonalityLimit(typeof input.markdown==='string'?parseProfile(input.markdown):null,store.readProfile().profile);return json(res,store.saveMarkdown(input.markdown,input.version));}
         if(method==='POST'&&route==='/api/profile/undo')return json(res,store.undo());
         if(method==='POST'&&route==='/api/modes/propose')return json(res,suggestModes(store));
         if(method==='POST'&&route==='/api/suggest-mode')return json(res,suggestMode(store.readProfile().profile,input));

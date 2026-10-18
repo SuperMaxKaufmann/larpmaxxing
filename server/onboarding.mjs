@@ -8,7 +8,9 @@ const fail=(message,status=400)=>Object.assign(new Error(message),{status});
 const digest=text=>createHash('sha256').update(text).digest('hex').slice(0,24);
 const emailOf=text=>(String(text).match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]||'').toLowerCase();
 const secret=value=>typeof value==='string'&&value.trim().length>0&&value.length<=8192&&!/[\r\n\x00]/.test(value);
-const summary=source=>({id:source.id,title:source.title,source:source.source,messageCount:source.messages.length,ownMessageCount:source.messages.filter(m=>m.role==='user').length});
+const summary=source=>({id:source.id,title:source.title,source:source.source,audience:source.audience||'',messageCount:source.messages.length,ownMessageCount:source.messages.filter(m=>m.role==='user').length});
+// The user's own note on who a batch of messages is with, e.g. "my boss" or "close friends".
+function audienceNote(value){if(value==null||value==='')return '';if(typeof value!=='string'||value.length>300||/[\r\n\x00]/.test(value))throw fail('Describe who these messages are with in one line (up to 300 characters).');return value.trim();}
 function dateRange(input) {
   const dates={};
   for(const key of ['after','before'])if(input[key]) {
@@ -65,16 +67,16 @@ export class Onboarding {
   async verifyModel(input){for(const provider of ['gmail','slack'])this.disconnect(provider);return {model:await this.modelSession.verify(input)};}
   forgetModel(){this.modelSession.clear();this.oauth=null;for(const provider of ['gmail','slack'])this.disconnect(provider);return {model:this.modelSession.status};}
   async tool(name,args,credentials=this.credentials){return this.sourceTool({credentials:{...credentials},fetchImpl:this.fetchImpl},name,args);}
-  ingest(result){
+  ingest(result,{audience=''}={}){
     const before=new Set(this.getSources().map(s=>s.id));
     if(!result.conversations?.length)return {addedCount:0,sources:this.getSources().map(summary),warnings:result.warnings||[],notice:'No messages matched. Try a different date range.'};
     const job=createImport(this.store,{conversations:result.conversations},{source:'auto',title:'Harness source import'});
     while(stepImport(this.store,job.id).status!=='complete'){}
     const ids=new Set(result.conversations.map(c=>c.id.startsWith(`${c.source}:`)?c.id:`${c.source}:${c.id}`));
-    this.store.mutate(s=>{for(const source of s.sources)if(ids.has(source.id))source.onboardingEligible=true;delete s.harness;});
+    this.store.mutate(s=>{for(const source of s.sources)if(ids.has(source.id)){source.onboardingEligible=true;if(audience)source.audience=audience;}delete s.harness;});
     const sources=this.getSources();return {addedCount:sources.filter(s=>!before.has(s.id)).length,sources:sources.map(summary),warnings:result.warnings||[]};
   }
-  paste(input){this.requireModel();return this.ingest(parsePastedEmails(input));}
+  paste(input){this.requireModel();const audience=audienceNote(input?.audience);return this.ingest(parsePastedEmails(input),{audience});}
   async connect(provider,{token}={}) {
     this.requireModel();if(!['gmail','slack'].includes(provider))throw fail('Unknown source.');
     const sequence=++this.generations[provider];

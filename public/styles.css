@@ -66,3 +66,25 @@ body:before{opacity:.023;z-index:0;background:linear-gradient(118deg,transparent
 .workspace-dialog .claude-connection { border-top: 1px solid var(--line, #32322e); margin-top: 24px; padding-top: 16px; }
 .workspace-dialog .claude-connection .button { margin-top: 12px; }
 .plan-separator { color: var(--quiet, #74766f); }
+
+/* Write: two input boxes, automatic choices, and the feedback agent. */
+.context-field { width: 100%; min-height: 150px; }
+.routing-line { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.routing-chip { font: 10px var(--mono); letter-spacing: .4px; padding: 4px 8px; border: 1px solid var(--line, #32322e); color: var(--text, #dedbd2); }
+.routing-chip.auto { color: var(--muted, #9b9a93); border-style: dashed; }
+.routing-reason { margin: 0 0 12px; }
+.agent-form { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line, #32322e); }
+.agent-form textarea { width: 100%; }
+.agent-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
+.agent-actions .input-hint { margin: 0; flex: 1 1 220px; }
+.agent-proposal { margin-top: 18px; padding: 18px; border: 1px solid var(--stone, #b9b5a8); }
+.agent-proposal h3 { margin: 8px 0; font-size: 16px; }
+.agent-proposal p { font-size: 12px; line-height: 1.8; color: var(--muted, #9b9a93); }
+.agent-change { margin-top: 10px; }
+.agent-change summary { cursor: pointer; font-size: 11px; }
+.global-context { margin: 28px 0; padding: 22px 24px; border: 1px solid var(--line, #32322e); }
+.global-context .section-heading h2 { margin: 0; }
+.global-context-text { font-size: 12px; line-height: 1.85; white-space: normal; }
+.personality-detail .mode-guidance h3.guidance-language { font-size: 12px; font-weight: 500; letter-spacing: .6px; margin: 22px 0 6px; color: var(--text, #dedbd2); }
+#source-audience { border: 1px solid #3c3c35; border-radius: 0; background: #10100f; width: 100%; padding: 13px 14px; color: var(--text); outline: none; font-size: 13px; margin-bottom: 8px; }
+#paste-form label[for=source-audience] { margin-top: 18px; }
